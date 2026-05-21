@@ -1,0 +1,19 @@
+{
+  "name": "aiboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node apps/server/src/server.js",
+    "start": "node apps/server/src/server.js",
+    "seed": "node apps/server/src/seed.js",
+    "import:inbox": "node apps/server/src/import-inbox.js",
+    "import:vault": "node apps/server/src/import-vault.js",
+    "import:agents": "node apps/server/src/import-agents.js",
+    "adapters:run": "node apps/server/src/run-adapters.js",
+    "check": "node --check apps/server/src/server.js && node --check apps/server/src/seed.js && node --check apps/server/src/import-inbox.js && node --check apps/server/src/import-vault.js && node --check apps/server/src/import-agents.js && node --check apps/server/src/run-adapters.js"
+  },
+  "engines": {
+    "node": ">=22.5"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "source": "openclaw",
+  "type": "artifact",
+  "priority": "normal",
+  "title": "OpenClaw 样例研究产出",
+  "summary": "OpenClaw 完成了一份样例深度研究产出，等待审阅。",
+  "rawContent": "OpenClaw 深度研究样例输出。商业模式、催化剂、风险和决策清单已经整理好，等待 James 审阅。",
+  "vaultPath": "companies/sample-company.md",
+  "tags": ["sample", "artifact", "company"]
+}

@@ -1,0 +1,14 @@
+{
+  "vault": {
+    "enabled": false,
+    "rootPath": "/absolute/path/to/Obsidian/Vault",
+    "researchQueuePath": "研究队列.md",
+    "trackingPath": "持仓与跟踪.md",
+    "watchFolders": [
+      "companies",
+      "sectors",
+      "governor"
+    ],
+    "pollMs": 15000
+  }
+}
