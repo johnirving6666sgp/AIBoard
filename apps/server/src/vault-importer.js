@@ -116,9 +116,13 @@ async function importVaultFile(rootPath, filePath, vault) {
     }
 
     const input = parseVaultFile(vaultPath, content, vault);
+    if (!shouldCreateVaultEvent(input, vaultPath)) {
+      upsertVaultSnapshot({ vaultPath, contentHash, eventId: null });
+      return { vaultPath, status: "skipped", reason: "low-signal-vault-file" };
+    }
+
     const event = await createEvent(input);
     upsertVaultSnapshot({ vaultPath, contentHash, eventId: event.id });
-
     return { vaultPath, status: "imported", eventId: event.id, title: event.title };
   } catch (error) {
     return { vaultPath, status: "failed", error: error.message };
@@ -128,7 +132,8 @@ async function importVaultFile(rootPath, filePath, vault) {
 function parseVaultFile(vaultPath, content, vault) {
   const { frontmatter, body } = parseFrontmatter(content);
   const type = frontmatter.type || inferVaultType(vaultPath, vault);
-  const title = frontmatter.title || extractMarkdownTitle(body) || path.basename(vaultPath, path.extname(vaultPath));
+  const cleanedBody = cleanVaultBody(body.trim() || content.trim(), type);
+  const title = frontmatter.title || inferVaultTitle(vaultPath, cleanedBody, type) || path.basename(vaultPath, path.extname(vaultPath));
   const priority = frontmatter.priority || (type === "research_queue" ? "high" : "normal");
 
   return {
@@ -139,7 +144,7 @@ function parseVaultFile(vaultPath, content, vault) {
     priority,
     title,
     summary: frontmatter.summary,
-    rawContent: body.trim() || content.trim(),
+    rawContent: cleanedBody,
     vaultPath,
     tags: [
       ...new Set([
@@ -160,6 +165,57 @@ function inferVaultType(vaultPath, vault) {
   if (vaultPath.startsWith("sectors")) return "finding";
   if (vaultPath.startsWith("governor")) return "task";
   return "finding";
+}
+
+function inferVaultTitle(vaultPath, body, type) {
+  if (type === "research_queue") return "研究队列更新";
+  if (type === "tracking_update") return "持仓与跟踪";
+  return extractMarkdownTitle(body);
+}
+
+function shouldCreateVaultEvent(input, vaultPath) {
+  if (["research_queue", "tracking_update", "finding", "task", "question", "alert", "decision"].includes(input.type)) {
+    return Boolean(input.rawContent.trim());
+  }
+
+  if (input.type !== "artifact") return true;
+  const tags = input.tags || [];
+  const hasExplicitSignal = tags.some((tag) => ["aiboard", "research", "decision", "tracking", "queue"].includes(String(tag).toLowerCase()));
+  return hasExplicitSignal || /研究|决策|跟踪|催化剂|风险|OpenClaw|Hermes/i.test(input.rawContent.slice(0, 1200));
+}
+
+function cleanVaultBody(body, type) {
+  if (type !== "research_queue") return body;
+
+  const lines = body.split(/\r?\n/);
+  const kept = [];
+  let inShellBlock = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#\s*(Adding|Appending)\b/i.test(trimmed)) {
+      inShellBlock = true;
+      continue;
+    }
+    if (/^(if\s+!?\s*grep\b|then\b|fi\b|cat\s+>>|echo\s+['"]?\||ENTRIES\b)/.test(trimmed)) {
+      inShellBlock = true;
+      continue;
+    }
+    if (inShellBlock && /^\|/.test(trimmed)) {
+      kept.push(line);
+      continue;
+    }
+    if (inShellBlock && !trimmed) continue;
+    inShellBlock = false;
+    kept.push(line);
+  }
+
+  return kept
+    .join("\n")
+    .replace(/^\d+\|\|/gm, "|")
+    .replace(/\|#\s*(Adding|Appending)\b.*$/gim, "|")
+    .replace(/\|\s*#\s*Adding the header if missing[\s\S]*?(?=\n\| |$)/i, "|")
+    .trim();
 }
 
 function hashContent(content) {

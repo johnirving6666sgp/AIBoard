@@ -7,9 +7,7 @@ const state = {
   query: ""
 };
 
-const statsEl = document.querySelector("#stats");
 const eventListEl = document.querySelector("#eventList");
-const detailEl = document.querySelector("#eventDetail");
 const artifactListEl = document.querySelector("#artifactList");
 const artifactCountEl = document.querySelector("#artifactCount");
 const commandListEl = document.querySelector("#commandList");
@@ -60,12 +58,20 @@ const labels = {
   cancel: "取消"
 };
 
+const viewLabels = {
+  now: "现在",
+  research_flow: "研究主线",
+  research_queue: "研究队列",
+  activity: "智能体动态",
+  artifacts: "产出文件",
+  tracking_update: "持仓跟踪",
+  debug: "系统调试",
+  history: "历史归档"
+};
+
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
-    button.classList.add("active");
-    state.view = button.dataset.view;
-    renderEvents();
+    selectView(button.dataset.view);
   });
 });
 
@@ -146,8 +152,7 @@ intakeForm.addEventListener("submit", async (event) => {
 await loadAll();
 
 async function loadAll() {
-  const [stats, artifacts, commands] = await Promise.all([
-    api("/api/stats"),
+  const [artifacts, commands] = await Promise.all([
     api("/api/artifacts"),
     api("/api/commands?limit=20")
   ]);
@@ -156,7 +161,6 @@ async function loadAll() {
   renderArtifacts();
   renderCommands();
   await loadEvents();
-  renderStats(stats);
   await loadConfigStatus();
 }
 
@@ -173,72 +177,91 @@ async function loadEvents() {
   const params = new URLSearchParams();
   if (state.query) params.set("q", state.query);
   state.events = await api(`/api/events?${params}`);
-  if (!state.selectedId && state.events.length) state.selectedId = state.events[0].id;
   if (state.selectedId && !state.events.some((event) => event.id === state.selectedId)) {
-    state.selectedId = state.events[0]?.id || null;
+    state.selectedId = null;
   }
-  renderEvents();
-  await renderDetail();
+  await renderEvents();
 }
 
-function renderStats(stats) {
-  const realEvents = state.events.filter((event) => !isDebugNoise(event));
-  const researchFlow = state.events.filter(isResearchFlowEvent);
-  const items = [
-    ["需要处理", realEvents.filter((event) => ["new", "triaged"].includes(event.status)).length || stats.needAttention],
-    ["研究主线", researchFlow.length],
-    ["研究队列", stats.researchQueue],
-    ["产出文件", stats.artifacts],
-    ["持仓跟踪", stats.tracking],
-    ["命令草稿", stats.draftCommands]
-  ];
-
-  statsEl.innerHTML = items.map(([label, value]) => `
-    <article class="stat">
-      <span class="stat-value">${value || 0}</span>
-      <span class="stat-label">${label}</span>
-    </article>
-  `).join("");
+async function selectView(view) {
+  state.view = view;
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.view === view);
+  });
+  await renderEvents();
 }
 
-function renderEvents() {
+async function renderEvents() {
   const events = filteredEvents();
   if (state.selectedId && !events.some((event) => event.id === state.selectedId)) {
-    state.selectedId = events[0]?.id || null;
+    state.selectedId = null;
   }
 
   if (!events.length) {
+    renderTabCounts();
     eventListEl.innerHTML = `<div class="empty-state">这个视图暂时没有事件</div>`;
-    detailEl.innerHTML = `<div class="empty-state">请选择一个事件</div>`;
     return;
   }
 
+  renderTabCounts();
+
   eventListEl.innerHTML = events.map((event) => `
-    <button class="event-card ${event.id === state.selectedId ? "active" : ""}" data-id="${event.id}">
-      <div class="event-meta">
-        ${badge(event.source, labels[event.source] || event.source)}
-        ${badge(event.priority, labels[event.priority] || event.priority)}
-        ${badge(event.status, labels[event.status] || event.status)}
-        ${isDebugNoise(event) ? badge("debug", "调试") : ""}
-      </div>
-      <div class="event-title">${escapeHtml(event.title)}</div>
-      <div class="event-summary">${escapeHtml(event.summary)}</div>
-    </button>
+    <article class="event-item ${event.id === state.selectedId ? "active" : ""}">
+      <button class="event-card ${event.id === state.selectedId ? "active" : ""}" data-id="${event.id}">
+        <div class="event-meta">
+          ${badge(event.source, labels[event.source] || event.source)}
+          ${badge(event.priority, labels[event.priority] || event.priority)}
+          ${badge(event.status, labels[event.status] || event.status)}
+          ${isDebugNoise(event) ? badge("debug", "调试") : ""}
+        </div>
+        <div class="event-card-head">
+          <div class="event-title">${escapeHtml(event.title)}</div>
+          <span class="event-toggle">${event.id === state.selectedId ? "收起" : "详情"}</span>
+        </div>
+        <div class="event-summary">${escapeHtml(compactEventSummary(event))}</div>
+      </button>
+      ${event.id === state.selectedId ? '<div id="eventDetail" class="event-detail inline-detail"></div>' : ""}
+    </article>
   `).join("");
 
   eventListEl.querySelectorAll(".event-card").forEach((card) => {
     card.addEventListener("click", async () => {
-      state.selectedId = card.dataset.id;
-      renderEvents();
-      await renderDetail();
-      detailEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      state.selectedId = state.selectedId === card.dataset.id ? null : card.dataset.id;
+      await renderEvents();
     });
+  });
+
+  const inlineDetail = eventListEl.querySelector("#eventDetail");
+  if (inlineDetail && state.selectedId) {
+    await renderDetail(inlineDetail);
+  }
+}
+
+function renderTabCounts() {
+  document.querySelectorAll(".tab").forEach((tab) => {
+    const view = tab.dataset.view;
+    const count = countForView(view);
+    tab.innerHTML = `
+      <span>${escapeHtml(viewLabels[view] || tab.textContent)}</span>
+      <span class="tab-count">${count}</span>
+    `;
   });
 }
 
-async function renderDetail() {
+function countForView(view) {
+  const primary = state.events.filter(isPrimaryEvent);
+  if (view === "now") return primary.filter((event) => ["new", "triaged"].includes(event.status)).length;
+  if (view === "research_flow") return state.events.filter(isResearchFlowEvent).length;
+  if (view === "activity") return primary.filter((event) => ["hermes", "openclaw"].includes(event.source)).length;
+  if (view === "artifacts") return state.events.filter((event) => event.type === "artifact" && !isDebugNoise(event)).length;
+  if (view === "debug") return state.events.filter(isDebugNoise).length;
+  if (view === "history") return state.events.length;
+  return primary.filter((event) => event.type === view).length;
+}
+
+async function renderDetail(targetEl) {
   if (!state.selectedId) {
-    detailEl.innerHTML = `<div class="empty-state">请选择一个事件</div>`;
+    targetEl.innerHTML = `<div class="empty-state">请选择一个事件</div>`;
     return;
   }
 
@@ -248,7 +271,7 @@ async function renderDetail() {
     ? `<button class="secondary-button" data-open-markdown="${encodeURIComponent(event.markdownPath)}">查看 Markdown</button>`
     : "";
 
-  detailEl.innerHTML = `
+  targetEl.innerHTML = `
     <p class="detail-kicker">已选事件</p>
     <div class="detail-meta">
       ${badge(event.source, labels[event.source] || event.source)}
@@ -258,7 +281,7 @@ async function renderDetail() {
       ${isDebugNoise(event) ? badge("debug", "调试") : ""}
     </div>
     <h3>${escapeHtml(event.title)}</h3>
-    <p class="detail-summary">${escapeHtml(event.summary)}</p>
+    ${renderStructuredSummary(event)}
     <div class="detail-actions">
       <button class="status-button" data-status="triaged">已分流</button>
       <button class="status-button" data-status="in_progress">处理中</button>
@@ -295,7 +318,7 @@ async function renderDetail() {
     </section>
   `;
 
-  detailEl.querySelectorAll("[data-status]").forEach((button) => {
+  targetEl.querySelectorAll("[data-status]").forEach((button) => {
     button.addEventListener("click", async () => {
       await api(`/api/events/${event.id}/status`, {
         method: "PATCH",
@@ -305,16 +328,16 @@ async function renderDetail() {
     });
   });
 
-  const openMarkdown = detailEl.querySelector("[data-open-markdown]");
+  const openMarkdown = targetEl.querySelector("[data-open-markdown]");
   if (openMarkdown) {
     openMarkdown.addEventListener("click", async () => {
       const content = await fetch(`/api/markdown/${openMarkdown.dataset.openMarkdown}`).then((res) => res.text());
-      detailEl.querySelector("#markdownPreviewWrap").hidden = false;
-      detailEl.querySelector("#markdownPreview").textContent = content;
+      targetEl.querySelector("#markdownPreviewWrap").hidden = false;
+      targetEl.querySelector("#markdownPreview").textContent = content;
     });
   }
 
-  detailEl.querySelectorAll("[data-command-action]").forEach((button) => {
+  targetEl.querySelectorAll("[data-command-action]").forEach((button) => {
     button.addEventListener("click", async () => {
       const action = (event.actions || []).find((item) => item.id === button.dataset.commandAction);
       if (!action) return;
@@ -334,7 +357,7 @@ async function renderDetail() {
 }
 
 function renderArtifacts() {
-  const visibleArtifacts = state.artifacts.filter((artifact) => !isDebugArtifact(artifact));
+  const visibleArtifacts = state.artifacts.filter((artifact) => !isDebugArtifact(artifact)).slice(0, 12);
   artifactCountEl.textContent = `${visibleArtifacts.length} 个文件`;
   artifactListEl.innerHTML = visibleArtifacts.map((artifact) => `
     <article class="artifact-item">
@@ -345,6 +368,61 @@ function renderArtifacts() {
       <span class="badge">${escapeHtml(labels[artifact.kind] || artifact.kind)}</span>
     </article>
   `).join("") || `<div class="empty-state">暂时没有产出文件</div>`;
+}
+
+function renderStructuredSummary(event) {
+  const rows = parseMarkdownTableRows(event.rawContent || event.summary || "");
+  if (rows.length) {
+    return `
+      <div class="structured-summary">
+        ${rows.slice(0, 8).map(renderQueueRow).join("")}
+        ${rows.length > 8 ? `<p class="muted">还有 ${rows.length - 8} 条，点“查看 Markdown”看完整内容。</p>` : ""}
+      </div>
+    `;
+  }
+  return `<p class="detail-summary">${escapeHtml(event.summary)}</p>`;
+}
+
+function compactEventSummary(event) {
+  const rows = parseMarkdownTableRows(event.rawContent || event.summary || "");
+  if (!rows.length) return event.summary;
+
+  const highPriorityCount = rows.filter((row) => row[4] === "高").length;
+  const names = rows
+    .slice(0, 3)
+    .map((row) => row[2])
+    .filter(Boolean)
+    .join("、");
+  const priorityText = highPriorityCount ? `，${highPriorityCount} 条高优先级` : "";
+  const namesText = names ? `：${names}${rows.length > 3 ? "..." : ""}` : "";
+  return `${rows.length} 条研究候选${priorityText}${namesText}`;
+}
+
+function renderQueueRow(row) {
+  const [date, market, code, note, priority, status] = row;
+  return `
+    <article class="summary-row">
+      <div class="summary-row-head">
+        <strong>${escapeHtml(code || "未命名")}</strong>
+        <span>${escapeHtml(market || "")}</span>
+        ${priority ? badge(priority === "高" ? "high" : "normal", priority) : ""}
+        ${status ? badge("tag", status) : ""}
+      </div>
+      <p>${escapeHtml(note || "")}</p>
+      ${date ? `<div class="artifact-path">${escapeHtml(date)}</div>` : ""}
+    </article>
+  `;
+}
+
+function parseMarkdownTableRows(content) {
+  return String(content || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.endsWith("|"))
+    .filter((line) => !/^\|\s*-+/.test(line))
+    .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
+    .filter((cells) => cells.length >= 4)
+    .filter((cells) => !["日期", "市场"].includes(cells[0]));
 }
 
 function renderCommands() {
@@ -392,7 +470,7 @@ function actionLabel(action) {
 }
 
 function filteredEvents() {
-  const visibleEvents = state.events.filter((event) => !isDebugNoise(event));
+  const visibleEvents = state.events.filter(isPrimaryEvent);
   if (state.view === "now") {
     return visibleEvents.filter((event) => ["new", "triaged"].includes(event.status));
   }
@@ -403,7 +481,7 @@ function filteredEvents() {
     return visibleEvents.filter((event) => ["hermes", "openclaw"].includes(event.source));
   }
   if (state.view === "artifacts") {
-    return visibleEvents.filter((event) => event.type === "artifact");
+    return state.events.filter((event) => event.type === "artifact" && !isDebugNoise(event));
   }
   if (state.view === "debug") {
     return state.events.filter(isDebugNoise);
@@ -418,8 +496,18 @@ function isResearchFlowEvent(event) {
   if (isDebugNoise(event)) return false;
   const tags = event.tags || [];
   if (["research_queue", "tracking_update", "decision"].includes(event.type)) return true;
-  if (event.vaultPath && /研究队列|持仓|tracking|companies|sectors|governor/i.test(event.vaultPath)) return true;
+  if (event.vaultPath && /研究队列|持仓|tracking|sectors|governor/i.test(event.vaultPath)) return true;
   return tags.some((tag) => ["research", "market", "sector", "company", "governor"].includes(String(tag).toLowerCase()));
+}
+
+function isPrimaryEvent(event) {
+  if (isDebugNoise(event)) return false;
+  if (event.status === "archived") return false;
+  if (["research_queue", "tracking_update", "finding", "task", "question", "alert", "decision", "status"].includes(event.type)) {
+    return true;
+  }
+  if (event.source !== "vault" && event.type === "artifact") return true;
+  return false;
 }
 
 function isDebugNoise(event) {

@@ -137,7 +137,7 @@ const countByStatusStmt = db.prepare(`
 `);
 
 const countByTypeStmt = db.prepare(`
-  SELECT type, COUNT(*) as count FROM events GROUP BY type
+  SELECT type, COUNT(*) as count FROM events WHERE status != 'archived' GROUP BY type
 `);
 
 const insertActionStmt = db.prepare(`
@@ -155,11 +155,18 @@ const insertArtifactStmt = db.prepare(`
 `);
 
 const selectArtifactsStmt = db.prepare(`
-  SELECT * FROM artifacts ORDER BY created_at DESC LIMIT ?
+  SELECT artifacts.* FROM artifacts
+  LEFT JOIN events ON artifacts.event_id = events.id
+  WHERE COALESCE(events.status, 'new') != 'archived'
+  ORDER BY artifacts.created_at DESC LIMIT ?
 `);
 
 const countEventsStmt = db.prepare("SELECT COUNT(*) as count FROM events");
-const countArtifactsStmt = db.prepare("SELECT COUNT(*) as count FROM artifacts");
+const countArtifactsStmt = db.prepare(`
+  SELECT COUNT(*) as count FROM artifacts
+  LEFT JOIN events ON artifacts.event_id = events.id
+  WHERE COALESCE(events.status, 'new') != 'archived'
+`);
 
 const insertCommandStmt = db.prepare(`
   INSERT INTO commands (id, event_id, target, command_type, payload_json, status, created_by, created_at)

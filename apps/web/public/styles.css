@@ -143,42 +143,13 @@ textarea:focus {
   padding: 0 12px;
 }
 
-.stats {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
-}
-
-.stat {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 13px 14px;
-  box-shadow: var(--shadow);
-}
-
-.stat-value {
-  display: block;
-  margin-bottom: 3px;
-  font-size: 27px;
-  font-weight: 750;
-}
-
-.stat-label {
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .workspace {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 14px;
   min-height: 0;
 }
 
 .sidebar,
-.detail-pane,
 .panel {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -193,43 +164,115 @@ textarea:focus {
 .tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
   padding: 10px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fafb 100%);
   border-bottom: 1px solid var(--line);
 }
 
 .tab {
-  border: 0;
-  border-radius: 6px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  padding: 7px 9px;
+  padding: 0 8px;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.tab:hover {
+  background: #eef5f7;
+  color: var(--text);
 }
 
 .tab.active {
-  background: var(--surface-soft);
+  border-color: #cfe0e5;
+  background: #e8f0f3;
   color: var(--text);
+  font-weight: 650;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.tab-count {
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #dbe6ea;
+  color: #415158;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 5px;
+  font-size: 11px;
   font-weight: 650;
 }
 
+.tab.active .tab-count {
+  background: var(--surface);
+  color: var(--teal);
+}
+
 .event-list {
-  max-height: 520px;
-  overflow: auto;
+  overflow: visible;
+}
+
+.event-item {
+  border-bottom: 1px solid var(--line);
+}
+
+.event-item:last-child {
+  border-bottom: 0;
 }
 
 .event-card {
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: var(--surface);
-  padding: 14px;
+  padding: 14px 14px 15px;
   text-align: left;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 .event-card:hover,
 .event-card.active {
-  background: #f0f5f6;
+  background: #f4f8f9;
+}
+
+.event-card.active {
+  box-shadow: inset 3px 0 0 var(--teal);
+}
+
+.event-card-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.event-toggle {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7fafb;
+  color: var(--teal);
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.event-card:hover .event-toggle,
+.event-card.active .event-toggle {
+  border-color: rgba(14, 111, 131, 0.28);
+  background: #eef6f7;
+}
+
+.inline-detail {
+  border-top: 1px solid var(--line);
+  background: #fbfcfc;
+  padding: 16px 18px 18px;
 }
 
 .event-meta,
@@ -245,6 +288,8 @@ textarea:focus {
   margin-bottom: 6px;
   font-weight: 720;
   line-height: 1.3;
+  color: #101b20;
+  min-width: 0;
 }
 
 .event-summary,
@@ -299,12 +344,6 @@ textarea:focus {
   background: #f2f4f5;
 }
 
-.detail-pane {
-  min-width: 0;
-  padding: 16px;
-  scroll-margin-top: 14px;
-}
-
 .detail-kicker {
   margin-bottom: 8px;
   color: var(--muted);
@@ -323,6 +362,42 @@ textarea:focus {
   max-width: 780px;
   color: #35464e;
   line-height: 1.58;
+}
+
+.structured-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.summary-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfc;
+  padding: 10px;
+}
+
+.summary-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 6px;
+}
+
+.summary-row-head strong {
+  font-size: 15px;
+}
+
+.summary-row-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.summary-row p {
+  margin-bottom: 6px;
+  color: #35464e;
+  line-height: 1.5;
 }
 
 .detail-actions {
@@ -455,7 +530,6 @@ textarea {
     padding: 12px;
   }
 
-  .stats,
   .form-row,
   .tabs {
     grid-template-columns: 1fr;
