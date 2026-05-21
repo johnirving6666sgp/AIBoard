@@ -5,7 +5,8 @@ const state = {
   candidateStatuses: {},
   selectedId: null,
   view: "now",
-  query: ""
+  query: "",
+  loading: false
 };
 
 const eventListEl = document.querySelector("#eventList");
@@ -153,29 +154,45 @@ intakeForm.addEventListener("submit", async (event) => {
 });
 
 await loadAll();
+setInterval(() => {
+  if (!document.hidden) loadAll();
+}, 15000);
 
 async function loadAll() {
-  const [artifacts, commands, candidateStatuses] = await Promise.all([
-    api("/api/artifacts"),
-    api("/api/commands?limit=50"),
-    api("/api/candidates/statuses")
-  ]);
-  state.artifacts = artifacts;
-  state.commands = commands;
-  state.candidateStatuses = Object.fromEntries(candidateStatuses.map((item) => [
-    item.candidateKey,
-    item.status
-  ]));
-  renderArtifacts();
-  await loadEvents();
-  renderCommands();
-  await loadConfigStatus();
+  if (state.loading) return;
+  state.loading = true;
+  try {
+    const [artifacts, commands, candidateStatuses] = await Promise.all([
+      api("/api/artifacts"),
+      api("/api/commands?limit=50"),
+      api("/api/candidates/statuses")
+    ]);
+    state.artifacts = artifacts;
+    state.commands = commands;
+    state.candidateStatuses = Object.fromEntries(candidateStatuses.map((item) => [
+      item.candidateKey,
+      item.status
+    ]));
+    renderArtifacts();
+    await loadEvents();
+    renderCommands();
+    await loadConfigStatus();
+  } finally {
+    state.loading = false;
+  }
 }
 
 async function loadConfigStatus() {
-  const config = await api("/api/config");
+  const [config, vaultImport] = await Promise.all([
+    api("/api/config"),
+    api("/api/import/vault")
+  ]);
   if (config.vault?.configured) {
-    vaultStatus.textContent = `Vault 已启用：${config.vault.rootPath}`;
+    const latestSnapshot = vaultImport.snapshots?.[0];
+    const latestText = latestSnapshot
+      ? `最近同步：${latestSnapshot.vaultPath} · ${formatDateTime(latestSnapshot.importedAt)}`
+      : "等待首次同步";
+    vaultStatus.textContent = `Vault 实时同步：${config.vault.rootPath} · ${latestText}`;
   } else {
     vaultStatus.textContent = "Vault 未启用。可在 config/aiboard.config.json 中开启只读导入。";
   }
@@ -953,4 +970,16 @@ function escapeHtml(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function formatDateTime(value) {
+  if (!value) return "未知时间";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }

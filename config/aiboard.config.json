@@ -1,7 +1,7 @@
 {
   "vault": {
-    "enabled": false,
-    "rootPath": "",
+    "enabled": true,
+    "rootPath": "/Users/lobai/JohnAI",
     "researchQueuePath": "研究队列.md",
     "trackingPath": "持仓与跟踪.md",
     "watchFolders": [
