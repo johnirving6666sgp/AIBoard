@@ -49,13 +49,17 @@
 
         <section class="panel">
           <div class="panel-header">
-            <h2>命令草稿</h2>
+            <h2>OpenClaw 队列 / 结果</h2>
             <div class="button-row">
               <span id="commandCount" class="muted"></span>
-              <button id="runAdaptersButton" class="secondary-button" type="button">运行适配器</button>
+              <button id="runAdaptersButton" class="secondary-button" type="button">运行队列</button>
             </div>
           </div>
           <div id="commandList" class="command-list"></div>
+          <section id="openClawPreviewWrap" class="detail-section" hidden>
+            <h2>OpenClaw Markdown</h2>
+            <pre id="openClawPreview" class="markdown-preview"></pre>
+          </section>
         </section>
 
         <section class="panel">

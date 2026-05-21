@@ -2,6 +2,7 @@ const state = {
   events: [],
   artifacts: [],
   commands: [],
+  candidateStatuses: {},
   selectedId: null,
   view: "now",
   query: ""
@@ -12,6 +13,8 @@ const artifactListEl = document.querySelector("#artifactList");
 const artifactCountEl = document.querySelector("#artifactCount");
 const commandListEl = document.querySelector("#commandList");
 const commandCountEl = document.querySelector("#commandCount");
+const openClawPreviewWrap = document.querySelector("#openClawPreviewWrap");
+const openClawPreview = document.querySelector("#openClawPreview");
 const runAdaptersButton = document.querySelector("#runAdaptersButton");
 const searchInput = document.querySelector("#searchInput");
 const refreshButton = document.querySelector("#refreshButton");
@@ -152,15 +155,20 @@ intakeForm.addEventListener("submit", async (event) => {
 await loadAll();
 
 async function loadAll() {
-  const [artifacts, commands] = await Promise.all([
+  const [artifacts, commands, candidateStatuses] = await Promise.all([
     api("/api/artifacts"),
-    api("/api/commands?limit=20")
+    api("/api/commands?limit=50"),
+    api("/api/candidates/statuses")
   ]);
   state.artifacts = artifacts;
   state.commands = commands;
+  state.candidateStatuses = Object.fromEntries(candidateStatuses.map((item) => [
+    item.candidateKey,
+    item.status
+  ]));
   renderArtifacts();
-  renderCommands();
   await loadEvents();
+  renderCommands();
   await loadConfigStatus();
 }
 
@@ -177,7 +185,7 @@ async function loadEvents() {
   const params = new URLSearchParams();
   if (state.query) params.set("q", state.query);
   state.events = await api(`/api/events?${params}`);
-  if (state.selectedId && !state.events.some((event) => event.id === state.selectedId)) {
+  if (state.selectedId && !isCompanyPackId(state.selectedId) && !state.events.some((event) => event.id === state.selectedId)) {
     state.selectedId = null;
   }
   await renderEvents();
@@ -193,11 +201,15 @@ async function selectView(view) {
 
 async function renderEvents() {
   const events = filteredEvents();
-  if (state.selectedId && !events.some((event) => event.id === state.selectedId)) {
+  if (state.selectedId && !isCompanyPackId(state.selectedId) && !events.some((event) => event.id === state.selectedId)) {
+    state.selectedId = null;
+  }
+  const groupedEvents = groupCompanyResearchEvents(events);
+  if (state.selectedId && !groupedEvents.some((item) => item.id === state.selectedId)) {
     state.selectedId = null;
   }
 
-  if (!events.length) {
+  if (!groupedEvents.length) {
     renderTabCounts();
     eventListEl.innerHTML = `<div class="empty-state">这个视图暂时没有事件</div>`;
     return;
@@ -205,22 +217,22 @@ async function renderEvents() {
 
   renderTabCounts();
 
-  eventListEl.innerHTML = events.map((event) => `
-    <article class="event-item ${event.id === state.selectedId ? "active" : ""}">
-      <button class="event-card ${event.id === state.selectedId ? "active" : ""}" data-id="${event.id}">
+  eventListEl.innerHTML = groupedEvents.map((item) => `
+    <article class="event-item ${item.id === state.selectedId ? "active" : ""}">
+      <button class="event-card ${item.id === state.selectedId ? "active" : ""}" data-id="${item.id}">
         <div class="event-meta">
-          ${badge(event.source, labels[event.source] || event.source)}
-          ${badge(event.priority, labels[event.priority] || event.priority)}
-          ${badge(event.status, labels[event.status] || event.status)}
-          ${isDebugNoise(event) ? badge("debug", "调试") : ""}
+          ${item.kind === "company_pack" ? badge("company", "公司研究包") : badge(item.source, labels[item.source] || item.source)}
+          ${item.kind === "company_pack" ? badge("tag", `${item.events.length} 个模块`) : badge(item.priority, labels[item.priority] || item.priority)}
+          ${item.kind !== "company_pack" ? badge(item.status, labels[item.status] || item.status) : ""}
+          ${item.kind !== "company_pack" && isDebugNoise(item) ? badge("debug", "调试") : ""}
         </div>
         <div class="event-card-head">
-          <div class="event-title">${escapeHtml(event.title)}</div>
-          <span class="event-toggle">${event.id === state.selectedId ? "收起" : "详情"}</span>
+          <div class="event-title">${escapeHtml(item.title)}</div>
+          <span class="event-toggle">${item.id === state.selectedId ? "收起" : "详情"}</span>
         </div>
-        <div class="event-summary">${escapeHtml(compactEventSummary(event))}</div>
+        <div class="event-summary">${escapeHtml(item.kind === "company_pack" ? compactCompanyPackSummary(item) : compactEventSummary(item))}</div>
       </button>
-      ${event.id === state.selectedId ? '<div id="eventDetail" class="event-detail inline-detail"></div>' : ""}
+      ${item.id === state.selectedId ? '<div id="eventDetail" class="event-detail inline-detail"></div>' : ""}
     </article>
   `).join("");
 
@@ -259,18 +271,116 @@ function countForView(view) {
   return primary.filter((event) => event.type === view).length;
 }
 
+function groupCompanyResearchEvents(events) {
+  const groups = new Map();
+  const output = [];
+
+  for (const event of events) {
+    const key = companyResearchKey(event);
+    if (!key) {
+      output.push(event);
+      continue;
+    }
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(event);
+  }
+
+  for (const [key, group] of groups) {
+    if (group.length < 3) {
+      output.push(...group);
+      continue;
+    }
+    output.push({
+      id: `company_pack:${key}`,
+      kind: "company_pack",
+      key,
+      title: `${key} 公司研究包`,
+      events: group.sort((a, b) => moduleOrder(a.title) - moduleOrder(b.title))
+    });
+  }
+
+  return output.sort((a, b) => {
+    const aTime = a.kind === "company_pack" ? newestTime(a.events) : a.createdAt;
+    const bTime = b.kind === "company_pack" ? newestTime(b.events) : b.createdAt;
+    return String(bTime || "").localeCompare(String(aTime || ""));
+  });
+}
+
+function isCompanyPackId(id) {
+  return String(id || "").startsWith("company_pack:");
+}
+
+function companyResearchKey(event) {
+  if (event.source !== "vault") return null;
+  const title = String(event.title || "").trim();
+  const match = title.match(/^([A-Z0-9]{1,8})(?:\s*[—-]\s*|\s+)(.+)$/);
+  if (!match) return null;
+  const key = match[1];
+  const moduleName = match[2] || "";
+  if (/估值|产业链|关键时间线|风险|跟踪|空方|多方|公司|概览|逻辑|分析/i.test(moduleName)) return key;
+  return null;
+}
+
+function moduleOrder(title) {
+  const order = ["公司", "概览", "产业链", "关键时间线", "风险", "跟踪", "空方", "多方", "估值"];
+  const index = order.findIndex((item) => String(title).includes(item));
+  return index === -1 ? 99 : index;
+}
+
+function newestTime(events) {
+  return events.map((event) => event.createdAt).filter(Boolean).sort().at(-1) || "";
+}
+
+function compactCompanyPackSummary(pack) {
+  return pack.events.map((event) => moduleNameFromTitle(event.title, pack.key)).join(" · ");
+}
+
+function renderCompanyPackDetail(targetEl, packId) {
+  const key = packId.replace("company_pack:", "");
+  const packEvents = state.events
+    .filter((event) => companyResearchKey(event) === key)
+    .sort((a, b) => moduleOrder(a.title) - moduleOrder(b.title));
+
+  if (!packEvents.length) {
+    targetEl.innerHTML = `<div class="empty-state">这个公司研究包暂时没有可显示的模块</div>`;
+    return;
+  }
+
+  targetEl.innerHTML = `
+    <p class="detail-kicker">公司研究包</p>
+    <div class="detail-meta">
+      ${badge("company", key)}
+      ${badge("tag", `${packEvents.length} 个模块`)}
+    </div>
+    <h3>${escapeHtml(key)} 公司研究包</h3>
+    <div class="module-list">
+      ${packEvents.map((event) => `
+        <article class="module-item">
+          <strong>${escapeHtml(moduleNameFromTitle(event.title, key))}</strong>
+          <p>${escapeHtml(compactEventSummary(event))}</p>
+          ${event.vaultPath ? `<div class="artifact-path">Vault: ${escapeHtml(event.vaultPath)}</div>` : ""}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function moduleNameFromTitle(title, key) {
+  return String(title || "").replace(new RegExp(`^${key}\\s*[—-]?\\s*`), "").trim() || title;
+}
+
 async function renderDetail(targetEl) {
   if (!state.selectedId) {
     targetEl.innerHTML = `<div class="empty-state">请选择一个事件</div>`;
     return;
   }
+  if (isCompanyPackId(state.selectedId)) {
+    renderCompanyPackDetail(targetEl, state.selectedId);
+    return;
+  }
 
   const event = await api(`/api/events/${state.selectedId}`);
-  const draftCommands = (event.commands || []).filter((command) => command.status === "draft" && !isDebugCommand(command));
-  const markdownButton = event.markdownPath
-    ? `<button class="secondary-button" data-open-markdown="${encodeURIComponent(event.markdownPath)}">查看 Markdown</button>`
-    : "";
-
+  const draftCommands = visibleDraftCommands(event.commands || []);
   targetEl.innerHTML = `
     <p class="detail-kicker">已选事件</p>
     <div class="detail-meta">
@@ -282,30 +392,15 @@ async function renderDetail(targetEl) {
     </div>
     <h3>${escapeHtml(event.title)}</h3>
     ${renderStructuredSummary(event)}
-    <div class="detail-actions">
-      <button class="status-button" data-status="triaged">已分流</button>
-      <button class="status-button" data-status="in_progress">处理中</button>
-      <button class="status-button" data-status="done">已完成</button>
-      <button class="status-button" data-status="archived">归档</button>
-      ${markdownButton}
-    </div>
     ${event.vaultPath ? `<p class="muted">Vault: ${escapeHtml(event.vaultPath)}</p>` : ""}
     ${event.markdownPath ? `<p class="muted">Markdown: ${escapeHtml(event.markdownPath)}</p>` : ""}
     <div class="tags">
       ${(event.tags || []).map((tag) => badge("tag", tag)).join("")}
     </div>
     <section class="detail-section">
-      <h2>建议动作</h2>
-      <div class="detail-actions">
-        ${(event.actions || []).map((action) => `
-          <button class="secondary-button" data-command-action="${escapeHtml(action.id)}">${escapeHtml(actionLabel(action))}</button>
-        `).join("")}
-      </div>
-    </section>
-    <section class="detail-section">
-      <h2>命令草稿</h2>
+      <h2>OpenClaw 队列</h2>
       <div class="command-list compact">
-        ${draftCommands.map(renderCommandItem).join("") || '<p class="muted">这个事件还没有命令草稿。</p>'}
+        ${draftCommands.map(renderCommandItem).join("") || '<p class="muted">这个事件还没有 OpenClaw 队列。</p>'}
       </div>
     </section>
     <section class="detail-section">
@@ -318,16 +413,6 @@ async function renderDetail(targetEl) {
     </section>
   `;
 
-  targetEl.querySelectorAll("[data-status]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api(`/api/events/${event.id}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: button.dataset.status })
-      });
-      await loadAll();
-    });
-  });
-
   const openMarkdown = targetEl.querySelector("[data-open-markdown]");
   if (openMarkdown) {
     openMarkdown.addEventListener("click", async () => {
@@ -338,20 +423,43 @@ async function renderDetail(targetEl) {
   }
 
   targetEl.querySelectorAll("[data-command-action]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const action = (event.actions || []).find((item) => item.id === button.dataset.commandAction);
+    button.addEventListener("click", async (clickEvent) => {
+      clickEvent.stopPropagation();
+      const action = actionFromButton(button, event.actions || []);
       if (!action) return;
+      const candidate = button.dataset.candidate ? JSON.parse(button.dataset.candidate) : null;
+      const rowEl = button.closest(".summary-row");
       button.disabled = true;
+      const directState = candidate ? candidateActionMessage(action) : null;
+      if (directState) {
+        await saveCandidateState(event.id, candidate, directState);
+        markCandidateRow(rowEl, directState);
+        return;
+      }
       await api("/api/commands", {
         method: "POST",
         body: JSON.stringify({
           eventId: event.id,
           kind: action.kind,
           target: action.target,
-          payload: action.payload || {}
+          payload: {
+            ...(action.payload || {}),
+            ...(candidate ? {
+              title: [candidate.code, candidate.name].filter(Boolean).join(" "),
+              summary: candidate.note,
+              rawContent: formatCandidateForCommand(candidate),
+              candidate
+            } : {})
+          }
         })
       });
-      await loadAll();
+      if (candidate) {
+        const message = "已交给 OpenClaw";
+        await saveCandidateState(event.id, candidate, message);
+        markCandidateRow(rowEl, message);
+      }
+      state.commands = await api("/api/commands?limit=50");
+      renderCommands();
     });
   });
 }
@@ -373,9 +481,12 @@ function renderArtifacts() {
 function renderStructuredSummary(event) {
   const rows = parseMarkdownTableRows(event.rawContent || event.summary || "");
   if (rows.length) {
+    if (!isCandidateTable(rows, event)) {
+      return renderReadonlyTable(rows);
+    }
     return `
       <div class="structured-summary">
-        ${rows.slice(0, 8).map(renderQueueRow).join("")}
+        ${rows.slice(0, 8).map((row) => renderQueueRow(event.id, row, event.actions || [])).join("")}
         ${rows.length > 8 ? `<p class="muted">还有 ${rows.length - 8} 条，点“查看 Markdown”看完整内容。</p>` : ""}
       </div>
     `;
@@ -386,6 +497,7 @@ function renderStructuredSummary(event) {
 function compactEventSummary(event) {
   const rows = parseMarkdownTableRows(event.rawContent || event.summary || "");
   if (!rows.length) return event.summary;
+  if (!isCandidateTable(rows, event)) return `${rows.length} 行结构化表格`;
 
   const highPriorityCount = rows.filter((row) => row[4] === "高").length;
   const names = rows
@@ -398,20 +510,192 @@ function compactEventSummary(event) {
   return `${rows.length} 条研究候选${priorityText}${namesText}`;
 }
 
-function renderQueueRow(row) {
-  const [date, market, code, note, priority, status] = row;
+function isCandidateTable(rows, event) {
+  if (event.type === "research_queue") return true;
+  const candidateLikeRows = rows.filter(isCandidateRow);
+  return candidateLikeRows.length >= 2 && candidateLikeRows.length >= Math.ceil(rows.length * 0.6);
+}
+
+function isCandidateRow(row) {
+  const [date, market, codeCell, note, priority, status] = row;
+  const firstCell = String(date || "").trim();
+  const code = String(codeCell || "").trim();
+  const maybeCode = code.split(/\s+/)[0] || "";
+  const hasDate = /^\d{4}-\d{2}-\d{2}$/.test(firstCell);
+  const hasMarket = /^(A股|港股|美股|HK|US|CN|NASDAQ|NYSE)$/i.test(String(market || "").trim());
+  const hasTicker = /^(\d{4,6}|[A-Z]{1,6}(\.[A-Z]{1,3})?)$/.test(maybeCode);
+  const hasPriority = ["高", "中", "低", "普通", "紧急"].includes(String(priority || "").trim());
+  const hasResearchStatus = /待研究|研究中|已完成|持仓|观察/.test(String(status || ""));
+  return Boolean(note && (hasDate || hasMarket) && hasTicker && (hasPriority || hasResearchStatus));
+}
+
+function renderReadonlyTable(rows) {
+  const width = Math.max(...rows.map((row) => row.length));
   return `
-    <article class="summary-row">
+    <div class="readonly-table-wrap">
+      <table class="readonly-table">
+        <tbody>
+          ${rows.slice(0, 16).map((row) => `
+            <tr>
+              ${Array.from({ length: width }).map((_, index) => `<td>${escapeHtml(row[index] || "")}</td>`).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+      ${rows.length > 16 ? `<p class="muted">还有 ${rows.length - 16} 行，查看原始输出可看完整内容。</p>` : ""}
+    </div>
+  `;
+}
+
+function renderQueueRow(eventId, row, actions = []) {
+  const [date, market, code, note, priority, status] = row;
+  const candidate = candidateFromRow(row);
+  const candidateJson = escapeHtml(JSON.stringify(candidate));
+  const savedState = readCandidateState(eventId, candidate);
+  const stateKind = candidateStateKind(savedState);
+  const isHandled = Boolean(savedState);
+  return `
+    <article class="summary-row ${isHandled ? "has-row-result" : ""} ${stateKind ? `row-state-${stateKind}` : ""}">
       <div class="summary-row-head">
         <strong>${escapeHtml(code || "未命名")}</strong>
         <span>${escapeHtml(market || "")}</span>
         ${priority ? badge(priority === "高" ? "high" : "normal", priority) : ""}
-        ${status ? badge("tag", status) : ""}
+        ${savedState ? badge("tag", savedState) : (status ? badge("tag", status) : "")}
       </div>
       <p>${escapeHtml(note || "")}</p>
       ${date ? `<div class="artifact-path">${escapeHtml(date)}</div>` : ""}
+      <div class="row-actions">
+        <span>建议动作</span>
+        <div>
+          ${candidateActions(actions).map((action) => `
+            <button class="secondary-button row-action-button" data-command-action="${escapeHtml(action.id)}" data-command-kind="${escapeHtml(action.kind)}" data-command-target="${escapeHtml(action.target || "")}" data-command-payload="${escapeHtml(JSON.stringify(action.payload || {}))}" data-candidate="${candidateJson}" ${isHandled ? "disabled" : ""}>
+              ${escapeHtml(actionLabel(action))}
+            </button>
+          `).join("") || '<span class="muted">暂无建议动作</span>'}
+        </div>
+      </div>
+      <div class="row-result" ${savedState ? "" : "hidden"}>${escapeHtml(savedState || "")}</div>
     </article>
   `;
+}
+
+function candidateFromRow(row) {
+  const [date, market, codeCell, note, priority, status] = row;
+  const parts = String(codeCell || "").trim().split(/\s+/).filter(Boolean);
+  return {
+    date: date || null,
+    market: market || null,
+    code: parts[0] || codeCell || null,
+    name: parts.slice(1).join(" ") || null,
+    note: note || "",
+    priority: priority || null,
+    status: status || null
+  };
+}
+
+function candidateActions(actions = []) {
+  const byKey = new Map();
+  const add = (action) => {
+    const key = action.kind === "status" ? `${action.kind}:${action.payload?.status || ""}` : action.kind;
+    byKey.set(key, {
+      id: action.id || key,
+      kind: action.kind,
+      label: action.label,
+      target: action.target,
+      payload: action.payload || {}
+    });
+  };
+
+  add({ id: "candidate_assign_openclaw", kind: "assign", label: "交给 OpenClaw", target: "openclaw" });
+  for (const action of actions) {
+    if (action.kind === "archive") add({ ...action, label: "暂不研究" });
+    if (action.kind === "status" && action.payload?.status === "done") add(action);
+  }
+  if (!byKey.has("archive")) add({ id: "candidate_archive", kind: "archive", label: "暂不研究" });
+  if (!byKey.has("status:done")) add({ id: "candidate_done", kind: "status", label: "已完成", payload: { status: "done" } });
+
+  return [
+    byKey.get("assign"),
+    byKey.get("archive"),
+    byKey.get("status:done")
+  ].filter(Boolean);
+}
+
+function actionFromButton(button, actions = []) {
+  const existing = actions.find((item) => item.id === button.dataset.commandAction);
+  if (existing) return existing;
+  return {
+    id: button.dataset.commandAction,
+    kind: button.dataset.commandKind,
+    target: button.dataset.commandTarget || undefined,
+    payload: button.dataset.commandPayload ? JSON.parse(button.dataset.commandPayload) : {}
+  };
+}
+
+function formatCandidateForCommand(candidate) {
+  const title = [candidate.code, candidate.name].filter(Boolean).join(" ");
+  return [
+    `研究标的：${title || "未命名"}`,
+    candidate.market ? `市场：${candidate.market}` : "",
+    candidate.priority ? `优先级：${candidate.priority}` : "",
+    candidate.status ? `状态：${candidate.status}` : "",
+    candidate.date ? `日期：${candidate.date}` : "",
+    candidate.note ? `研究理由：${candidate.note}` : ""
+  ].filter(Boolean).join("\n");
+}
+
+function candidateStateKey(eventId, candidate) {
+  return `aiboard:candidate:${eventId}:${candidate.code || ""}:${candidate.name || ""}`;
+}
+
+function readCandidateState(eventId, candidate) {
+  const key = candidateStateKey(eventId, candidate);
+  return normalizeCandidateState(state.candidateStatuses[key] || localStorage.getItem(key));
+}
+
+async function saveCandidateState(eventId, candidate, message) {
+  const candidateKey = candidateStateKey(eventId, candidate);
+  state.candidateStatuses[candidateKey] = message;
+  localStorage.setItem(candidateKey, message);
+  await api("/api/candidates/statuses", {
+    method: "POST",
+    body: JSON.stringify({ eventId, candidateKey, status: message, candidate })
+  });
+}
+
+function markCandidateRow(rowEl, message) {
+  if (!rowEl) return;
+  rowEl.classList.add("has-row-result");
+  rowEl.classList.remove("row-state-done", "row-state-archived", "row-state-openclaw");
+  const stateKind = candidateStateKind(message);
+  if (stateKind) rowEl.classList.add(`row-state-${stateKind}`);
+  rowEl.querySelectorAll(".row-action-button").forEach((button) => {
+    button.disabled = true;
+  });
+  const resultEl = rowEl.querySelector(".row-result");
+  if (resultEl) {
+    resultEl.hidden = false;
+    resultEl.textContent = message;
+  }
+}
+
+function candidateActionMessage(action) {
+  if (action.kind === "archive") return "已暂不研究";
+  if (action.kind === "status" && action.payload?.status === "done") return "已完成";
+  return null;
+}
+
+function normalizeCandidateState(message) {
+  if (message === "已加入命令草稿") return "已交给 OpenClaw";
+  if (message === "已归档") return "已暂不研究";
+  return message || "";
+}
+
+function candidateStateKind(message) {
+  if (message === "已完成") return "done";
+  if (message === "已暂不研究") return "archived";
+  if (message === "已交给 OpenClaw") return "openclaw";
+  return "";
 }
 
 function parseMarkdownTableRows(content) {
@@ -426,15 +710,115 @@ function parseMarkdownTableRows(content) {
 }
 
 function renderCommands() {
-  const draftCommands = state.commands.filter((command) => command.status === "draft" && !isDebugCommand(command));
-  commandCountEl.textContent = `${draftCommands.length} 个草稿`;
-  commandListEl.innerHTML = draftCommands.map((command) => renderCommandItem(command, { showDispatch: true })).join("") || `<div class="empty-state">暂时没有命令草稿</div>`;
-  commandListEl.querySelectorAll("[data-dispatch-command]").forEach((button) => {
+  const queueCommands = openClawQueueCommands(state.commands);
+  const results = openClawResults();
+  commandCountEl.textContent = `${queueCommands.length} 个队列 / ${results.length} 个结果`;
+  commandListEl.innerHTML = `
+    <div class="work-section">
+      <h3>待执行队列</h3>
+      <div class="command-list compact">
+        ${queueCommands.map((command) => renderCommandItem(command)).join("") || `<div class="empty-state compact-empty">暂时没有 OpenClaw 队列</div>`}
+      </div>
+    </div>
+    <div class="work-section">
+      <h3>已产出文件</h3>
+      <div class="artifact-list">
+        ${results.map(renderOpenClawResultItem).join("") || `<div class="empty-state compact-empty">暂时还没有 OpenClaw 输出文件</div>`}
+      </div>
+    </div>
+  `;
+  commandListEl.querySelectorAll("[data-open-result-markdown]").forEach((button) => {
     button.addEventListener("click", async () => {
-      button.disabled = true;
-      await api(`/api/commands/${button.dataset.dispatchCommand}/dispatch`, { method: "POST" });
-      await loadAll();
+      const content = await fetch(`/api/markdown/${button.dataset.openResultMarkdown}`).then((res) => res.text());
+      openClawPreviewWrap.hidden = false;
+      openClawPreview.textContent = content;
     });
+  });
+}
+
+function openClawQueueCommands(commands) {
+  return uniqueCommands(commands.filter((command) => {
+    if (!["draft", "dispatched", "running"].includes(command.status)) return false;
+    if (command.target !== "openclaw") return false;
+    if (isDebugCommand(command)) return false;
+    if (command.payload?.status === "done") return false;
+    const candidate = command.payload?.candidate;
+    if (!candidate) return true;
+    const stateText = readCandidateState(command.eventId, candidate);
+    return !stateText || stateText === "已交给 OpenClaw";
+  }));
+}
+
+function openClawResults() {
+  const byPath = new Map();
+  for (const event of state.events) {
+    if (event.source !== "openclaw") continue;
+    if (isDebugNoise(event)) continue;
+    if (!event.markdownPath) continue;
+    byPath.set(event.markdownPath, {
+      title: event.title,
+      summary: event.summary,
+      path: event.markdownPath,
+      createdAt: event.createdAt
+    });
+  }
+  for (const artifact of state.artifacts) {
+    if (!String(artifact.path || "").includes("/openclaw/")) continue;
+    byPath.set(artifact.path, {
+      title: artifact.title,
+      summary: "OpenClaw Markdown 输出",
+      path: artifact.path,
+      createdAt: artifact.createdAt
+    });
+  }
+  return [...byPath.values()]
+    .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+    .slice(0, 8);
+}
+
+function renderOpenClawResultItem(result) {
+  return `
+    <article class="artifact-item">
+      <div>
+        <div class="event-meta">
+          ${badge("openclaw", "OpenClaw")}
+          ${badge("completed", "已产出")}
+        </div>
+        <strong>${escapeHtml(result.title)}</strong>
+        <div class="artifact-path">${escapeHtml(result.path)}</div>
+      </div>
+      <button class="secondary-button" data-open-result-markdown="${encodeURIComponent(result.path)}">查看</button>
+    </article>
+  `;
+}
+
+function visibleDraftCommands(commands) {
+  return uniqueCommands(commands.filter((command) => {
+    if (command.status !== "draft") return false;
+    if (isDebugCommand(command)) return false;
+    if (command.payload?.status === "done") return false;
+    const candidate = command.payload?.candidate;
+    if (!candidate) return true;
+    const stateText = readCandidateState(command.eventId, candidate);
+    return !stateText || stateText === "已交给 OpenClaw";
+  }));
+}
+
+function uniqueCommands(commands) {
+  const seen = new Set();
+  return commands.filter((command) => {
+    const candidate = command.payload?.candidate || {};
+    const key = [
+      command.target,
+      command.commandType,
+      command.payload?.title,
+      candidate.code,
+      candidate.name,
+      command.payload?.rawContent
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 }
 
@@ -459,7 +843,7 @@ function renderCommandItem(command, options = {}) {
 
 function actionLabel(action) {
   const byKind = {
-    archive: "归档",
+    archive: "暂不研究",
     status: action.payload?.status ? (labels[action.payload.status] || "更新状态") : "更新状态",
     assign: "交给 OpenClaw",
     ask_follow_up: action.target === "openclaw" ? "追问 OpenClaw" : "追问 Hermes",

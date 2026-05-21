@@ -5,7 +5,7 @@ import { runCommandById, runDispatchedCommands } from "./agent-adapters.js";
 import { importAgentOutputs, startAgentOutputWatcher } from "./agent-output-importer.js";
 import { createCommandDraft, dispatchCommand, queryCommands, updateCommandStatus } from "./command-service.js";
 import { loadConfig } from "./config.js";
-import { getStats, listArtifacts } from "./db.js";
+import { getStats, listArtifacts, listCandidateStatuses, upsertCandidateStatus } from "./db.js";
 import { createEvent, getEventWithActions, queryEvents, setEventStatus } from "./event-service.js";
 import { importInbox, startInboxWatcher } from "./inbox-importer.js";
 import { rootDir, webDir } from "./paths.js";
@@ -89,6 +89,17 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/candidates/statuses") {
+    sendJson(res, 200, listCandidateStatuses(url.searchParams.get("eventId")));
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/candidates/statuses") {
+    const body = await readJson(req);
+    sendJson(res, 201, upsertCandidateStatus(body));
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/commands") {
     const body = await readJson(req);
     sendJson(res, 201, await createCommandDraft(body));
@@ -125,7 +136,15 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/adapters/run") {
-    sendJson(res, 200, await runDispatchedCommands({ limit: 5 }));
+    const openClawDrafts = queryCommands({ status: "draft", limit: 50 }).filter((command) => {
+      return command.target === "openclaw" && command.payload?.status !== "done";
+    });
+    const dispatched = [];
+    for (const command of openClawDrafts) {
+      dispatched.push(await dispatchCommand(command.id));
+    }
+    const runResult = await runDispatchedCommands({ limit: 5, target: "openclaw" });
+    sendJson(res, 200, { dispatched: dispatched.length, ...runResult });
     return;
   }
 

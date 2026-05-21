@@ -50,6 +50,15 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS candidate_statuses (
+    event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    candidate_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    candidate_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (event_id, candidate_key)
+  );
+
   CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
@@ -194,6 +203,23 @@ const updateCommandStatusStmt = db.prepare(`
 
 const countCommandsByStatusStmt = db.prepare(`
   SELECT status, COUNT(*) as count FROM commands GROUP BY status
+`);
+
+const upsertCandidateStatusStmt = db.prepare(`
+  INSERT INTO candidate_statuses (event_id, candidate_key, status, candidate_json, updated_at)
+  VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(event_id, candidate_key) DO UPDATE SET
+    status = excluded.status,
+    candidate_json = excluded.candidate_json,
+    updated_at = excluded.updated_at
+`);
+
+const selectCandidateStatusesStmt = db.prepare(`
+  SELECT * FROM candidate_statuses ORDER BY updated_at DESC
+`);
+
+const selectEventCandidateStatusesStmt = db.prepare(`
+  SELECT * FROM candidate_statuses WHERE event_id = ? ORDER BY updated_at DESC
 `);
 
 const insertImportedFileStmt = db.prepare(`
@@ -394,6 +420,28 @@ export function listEventCommands(eventId) {
 
 export function setCommandStatus(id, status) {
   updateCommandStatusStmt.run(status, id);
+}
+
+export function upsertCandidateStatus({ eventId, candidateKey, status, candidate }) {
+  upsertCandidateStatusStmt.run(
+    eventId,
+    candidateKey,
+    status,
+    JSON.stringify(candidate || {}),
+    new Date().toISOString()
+  );
+  return { eventId, candidateKey, status, candidate };
+}
+
+export function listCandidateStatuses(eventId = null) {
+  const rows = eventId ? selectEventCandidateStatusesStmt.all(eventId) : selectCandidateStatusesStmt.all();
+  return rows.map((row) => ({
+    eventId: row.event_id,
+    candidateKey: row.candidate_key,
+    status: row.status,
+    candidate: JSON.parse(row.candidate_json || "{}"),
+    updatedAt: row.updated_at
+  }));
 }
 
 export function addArtifact(artifact) {

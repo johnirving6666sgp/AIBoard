@@ -5,8 +5,10 @@ import { createEvent } from "./event-service.js";
 
 const execFileAsync = promisify(execFile);
 
-export async function runDispatchedCommands({ limit = 5 } = {}) {
-  const commands = listCommands({ status: "dispatched", limit });
+export async function runDispatchedCommands({ limit = 5, target = null } = {}) {
+  const commands = listCommands({ status: "dispatched", limit: 50 })
+    .filter((command) => !target || command.target === target)
+    .slice(0, limit);
   const results = [];
 
   for (const command of commands) {
