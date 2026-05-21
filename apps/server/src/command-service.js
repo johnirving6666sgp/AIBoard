@@ -1,5 +1,5 @@
 import { createId } from "./ids.js";
-import { getCommand, getEvent, insertCommand, listCommands, listEventCommands, setCommandStatus } from "./db.js";
+import { getCommand, getEvent, insertCommand, listCommands, listEventCommands, setCommandStatus, updateEventStatus } from "./db.js";
 import { appendAuditNote } from "./markdown.js";
 import { writeCommandOutbox } from "./outbox.js";
 
@@ -17,6 +17,7 @@ export async function createCommandDraft(input) {
   insertCommand(command);
 
   if (event) {
+    updateEventStatus(event.id, "triaged");
     await appendAuditNote(event, `已为 ${command.target} 创建命令草稿：${command.commandType}。`);
   }
 
@@ -40,6 +41,7 @@ export async function dispatchCommand(id) {
 
   if (command.eventId) {
     const event = getEvent(command.eventId);
+    updateEventStatus(command.eventId, "in_progress");
     await appendAuditNote(event, `命令已派发到 ${command.target} outbox：${outbox.jsonPath}。`);
   }
 

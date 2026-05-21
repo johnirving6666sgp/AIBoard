@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aiboard.local</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Applications/Codex.app/Contents/Resources/node</string>
+    <string>apps/server/src/server.js</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOST</key>
+    <string>0.0.0.0</string>
+    <key>PORT</key>
+    <string>4173</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboard.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboard.err.log</string>
+</dict>
+</plist>

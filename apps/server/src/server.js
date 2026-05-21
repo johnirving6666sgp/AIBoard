@@ -45,11 +45,33 @@ server.listen(port, host, () => {
   console.log(`AIBoard running at http://${host}:${port}`);
 });
 
+server.on("error", (error) => {
+  console.error("AIBoard server error:", error);
+  process.exitCode = 1;
+});
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    console.log(`Received ${signal}, shutting down AIBoard...`);
+    server.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(1), 5000).unref();
+  });
+}
+
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/health") {
     const vault = getVaultSyncState();
     sendJson(res, 200, {
       ok: !["error", "stale"].includes(vault.status),
+      service: {
+        name: "AIBoard",
+        uptimeSec: Math.round(process.uptime()),
+        startedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+        pid: process.pid,
+        node: process.version
+      },
       vault
     });
     return;

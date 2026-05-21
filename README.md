@@ -63,6 +63,7 @@ Useful commands:
 
 ```bash
 npm run check
+npm run healthcheck
 npm run seed
 npm run import:inbox
 npm run import:vault
@@ -186,3 +187,22 @@ Smoke test status:
 
 - Hermes adapter: passed
 - OpenClaw adapter: passed
+
+## Deployment
+
+See [Deployment Notes](docs/DEPLOYMENT.md).
+
+For a local always-on service:
+
+```bash
+HOST=0.0.0.0 PORT=4173 npm run start
+```
+
+The homepage now starts with a compact daily cockpit:
+
+- 今日待处理
+- 待研究候选
+- OpenClaw 流转
+- 已回流结果
+
+When an OpenClaw command completes, AIBoard creates a result event, writes the Markdown archive, and marks the related candidate row as `OpenClaw 已产出`.

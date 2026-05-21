@@ -11,7 +11,8 @@
     "import:vault": "node apps/server/src/import-vault.js",
     "import:agents": "node apps/server/src/import-agents.js",
     "adapters:run": "node apps/server/src/run-adapters.js",
-    "check": "node --check apps/server/src/server.js && node --check apps/server/src/seed.js && node --check apps/server/src/import-inbox.js && node --check apps/server/src/import-vault.js && node --check apps/server/src/import-agents.js && node --check apps/server/src/run-adapters.js"
+    "healthcheck": "node scripts/healthcheck.mjs",
+    "check": "node --check apps/server/src/server.js && node --check apps/server/src/seed.js && node --check apps/server/src/import-inbox.js && node --check apps/server/src/import-vault.js && node --check apps/server/src/import-agents.js && node --check apps/server/src/run-adapters.js && node --check apps/server/src/agent-adapters.js && node --check apps/server/src/command-service.js && node --check scripts/healthcheck.mjs"
   },
   "engines": {
     "node": ">=22.5"

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getCommand, listCommands, setCommandStatus } from "./db.js";
+import { getCommand, listCommands, setCommandStatus, updateEventStatus, upsertCandidateStatus } from "./db.js";
 import { createEvent } from "./event-service.js";
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +50,7 @@ async function runCommand(command) {
       tags: ["adapter", "command", "completed"],
       vaultPath: command.payload?.vaultPath || undefined
     });
+    persistCommandCompletion(command);
     return { id: command.id, status: "completed", eventId: event.id };
   } catch (error) {
     setCommandStatus(command.id, "failed");
@@ -66,6 +67,27 @@ async function runCommand(command) {
     });
     return { id: command.id, status: "failed", eventId: event.id, error: error.message };
   }
+}
+
+function persistCommandCompletion(command) {
+  const candidate = command.payload?.candidate;
+  if (command.eventId && candidate) {
+    upsertCandidateStatus({
+      eventId: command.eventId,
+      candidateKey: candidateStateKey(command.eventId, candidate),
+      status: `${agentLabel(command.target)} 已产出`,
+      candidate
+    });
+    return;
+  }
+
+  if (command.eventId) {
+    updateEventStatus(command.eventId, "done");
+  }
+}
+
+function candidateStateKey(eventId, candidate) {
+  return `aiboard:candidate:${eventId}:${candidate.code || ""}:${candidate.name || ""}`;
 }
 
 async function executeForTarget(command) {

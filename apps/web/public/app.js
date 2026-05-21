@@ -25,6 +25,7 @@ const importVaultButton = document.querySelector("#importVaultButton");
 const importAgentsButton = document.querySelector("#importAgentsButton");
 const importResult = document.querySelector("#importResult");
 const vaultStatus = document.querySelector("#vaultStatus");
+const cockpitEl = document.querySelector("#cockpit");
 
 const labels = {
   hermes: "Hermes",
@@ -64,8 +65,8 @@ const labels = {
 
 const viewLabels = {
   now: "现在",
-  research_flow: "研究主线",
-  research_queue: "研究队列",
+  research_flow: "研究全局",
+  research_queue: "待研究候选",
   activity: "智能体动态",
   artifacts: "产出文件",
   tracking_update: "持仓跟踪",
@@ -175,11 +176,50 @@ async function loadAll() {
     ]));
     renderArtifacts();
     await loadEvents();
+    renderCockpit();
     renderCommands();
     await loadConfigStatus();
   } finally {
     state.loading = false;
   }
+}
+
+function renderCockpit() {
+  const primary = state.events.filter(isPrimaryEvent);
+  const needTriage = primary.filter((event) => ["new", "triaged"].includes(event.status));
+  const highPriority = needTriage.filter((event) => ["high", "urgent"].includes(event.priority));
+  const researchQueue = primary.filter((event) => event.type === "research_queue");
+  const queueCommands = openClawQueueCommands(state.commands);
+  const runningCommands = queueCommands.filter((command) => ["dispatched", "running"].includes(command.status));
+  const results = openClawResults();
+  const candidateDone = Object.values(state.candidateStatuses).filter((status) => normalizeCandidateState(status) === "OpenClaw 已产出").length;
+
+  cockpitEl.innerHTML = `
+    <button class="cockpit-card ${highPriority.length ? "is-hot" : ""}" data-cockpit-view="now">
+      <span>今日待处理</span>
+      <strong>${needTriage.length}</strong>
+      <small>${highPriority.length ? `${highPriority.length} 个高优先级` : "没有高优先级积压"}</small>
+    </button>
+    <button class="cockpit-card" data-cockpit-view="research_queue">
+      <span>待研究候选</span>
+      <strong>${researchQueue.length}</strong>
+      <small>Hermes / Governor 候选池</small>
+    </button>
+    <button class="cockpit-card ${queueCommands.length ? "is-active" : ""}" data-cockpit-view="activity">
+      <span>OpenClaw 流转</span>
+      <strong>${queueCommands.length}</strong>
+      <small>${runningCommands.length ? `${runningCommands.length} 个执行中` : "等待派发或执行"}</small>
+    </button>
+    <button class="cockpit-card" data-cockpit-view="artifacts">
+      <span>已回流结果</span>
+      <strong>${results.length}</strong>
+      <small>${candidateDone ? `${candidateDone} 个候选已产出` : "查看 OpenClaw Markdown"}</small>
+    </button>
+  `;
+
+  cockpitEl.querySelectorAll("[data-cockpit-view]").forEach((card) => {
+    card.addEventListener("click", () => selectView(card.dataset.cockpitView));
+  });
 }
 
 async function loadConfigStatus() {
@@ -719,7 +759,7 @@ function normalizeCandidateState(message) {
 function candidateStateKind(message) {
   if (message === "已完成") return "done";
   if (message === "已暂不研究") return "archived";
-  if (message === "已交给 OpenClaw") return "openclaw";
+  if (message === "已交给 OpenClaw" || message === "OpenClaw 已产出") return "openclaw";
   return "";
 }
 
