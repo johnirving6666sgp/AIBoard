@@ -124,6 +124,23 @@ Vault import is read-only and disabled by default. Configure it in `config/aiboa
 
 When enabled, AIBoard watches selected Markdown files and folders, imports changed content into SQLite, writes Markdown archive copies, and records `vaultPath` on each event. It uses content hashes to avoid duplicate events when files have not changed.
 
+For deployment health checks:
+
+```bash
+curl http://127.0.0.1:4173/api/health
+curl http://127.0.0.1:4173/api/import/vault
+```
+
+`/api/health` reports the live Vault sync state. A healthy sync returns `ok: true` with `vault.status: "ok"`, the last run summary, consecutive failure count, and the next scheduled poll time. AIBoard also stores recent sync runs in SQLite, so transient failures are visible after refresh instead of disappearing into server logs.
+
+The browser UI refreshes every 15 seconds while visible and shows the same status under `手动接入`:
+
+- `Vault 同步健康`: latest poll completed successfully.
+- `Vault 正在同步`: a poll is currently running.
+- `Vault 同步有失败项`: the poll completed but one or more files failed.
+- `Vault 同步过期`: no successful poll has completed within the expected window.
+- `Vault 同步异常`: repeated poll failures; check `/api/health` and server logs.
+
 ## Command Drafts
 
 Suggested actions create local draft commands. Drafts are recorded in SQLite and shown in the `Command Drafts` panel, but they do not execute OpenClaw, Hermes, or Vault writes yet.

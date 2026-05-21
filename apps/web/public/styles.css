@@ -653,6 +653,38 @@ textarea:focus {
   font-size: 12px;
 }
 
+.sync-health {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f7fafb;
+  line-height: 1.45;
+}
+
+.sync-ok {
+  border-color: rgba(24, 115, 93, 0.3);
+  background: #edf7f3;
+  color: var(--green);
+}
+
+.sync-running {
+  border-color: rgba(14, 111, 131, 0.3);
+  background: #edf6f8;
+  color: var(--teal);
+}
+
+.sync-warn {
+  border-color: rgba(147, 100, 18, 0.32);
+  background: #fbf5e8;
+  color: var(--amber);
+}
+
+.sync-error {
+  border-color: rgba(160, 59, 53, 0.32);
+  background: #fbefee;
+  color: var(--red);
+}
+
 .form-row {
   grid-template-columns: 1fr 1fr;
 }

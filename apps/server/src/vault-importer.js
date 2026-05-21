@@ -1,28 +1,57 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getVaultSnapshot, listVaultSnapshots, upsertVaultSnapshot } from "./db.js";
+import { getVaultSnapshot, listVaultSnapshots, listVaultSyncRuns, recordVaultSyncRun, upsertVaultSnapshot } from "./db.js";
 import { createEvent } from "./event-service.js";
 import { extractMarkdownTitle, parseFrontmatter } from "./inbox-importer.js";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const MAX_BACKOFF_MS = 60000;
 let vaultImportInProgress = false;
+let vaultSyncState = {
+  enabled: false,
+  rootPath: "",
+  pollMs: 15000,
+  running: false,
+  lastStartedAt: null,
+  lastFinishedAt: null,
+  lastOkAt: null,
+  lastErrorAt: null,
+  lastError: null,
+  consecutiveFailures: 0,
+  nextRunAt: null,
+  lastSummary: null
+};
 
 export async function importVault(config) {
   const vault = config?.vault;
+  const startedAt = new Date().toISOString();
+  vaultSyncState = {
+    ...vaultSyncState,
+    enabled: Boolean(vault?.enabled),
+    rootPath: vault?.rootPath || "",
+    pollMs: Number(vault?.pollMs || 15000),
+    running: true,
+    lastStartedAt: startedAt
+  };
+
   if (!vault?.enabled || !vault.rootPath) {
-    return {
+    const result = {
       enabled: false,
       imported: 0,
       skipped: 0,
       failed: 0,
+      scanned: 0,
       results: [],
       message: "Vault import is disabled. Set vault.enabled and vault.rootPath in config/aiboard.config.json."
     };
+    finishVaultSyncRun({ status: "disabled", startedAt, rootPath: vault?.rootPath || "", result });
+    return result;
   }
 
   if (vaultImportInProgress) {
-    return { enabled: true, imported: 0, skipped: 0, failed: 0, busy: true, results: [] };
+    vaultSyncState.running = true;
+    return { enabled: true, imported: 0, skipped: 0, failed: 0, scanned: 0, busy: true, results: [] };
   }
 
   vaultImportInProgress = true;
@@ -35,9 +64,25 @@ export async function importVault(config) {
       results.push(await importVaultFile(rootPath, filePath, vault));
     }
 
-    return summarizeResults(results);
+    const result = summarizeResults(results);
+    finishVaultSyncRun({ status: result.failed ? "degraded" : "ok", startedAt, rootPath, result });
+    return result;
+  } catch (error) {
+    const result = {
+      enabled: true,
+      imported: 0,
+      skipped: 0,
+      failed: 1,
+      scanned: 0,
+      busy: false,
+      results: [],
+      error: error.message
+    };
+    finishVaultSyncRun({ status: "error", startedAt, rootPath: vault.rootPath, result });
+    throw error;
   } finally {
     vaultImportInProgress = false;
+    vaultSyncState.running = false;
   }
 }
 
@@ -48,11 +93,13 @@ export function startVaultWatcher(getConfig, { intervalMs } = {}) {
       const config = await getConfig();
       const pollMs = Number(intervalMs || config?.vault?.pollMs || 15000);
       await importVault(config);
-      timer = setTimeout(tick, pollMs);
+      timer = scheduleNext(tick, pollMs);
       timer.unref?.();
     } catch (error) {
       console.error("Vault import failed:", error);
-      timer = setTimeout(tick, Number(intervalMs || 15000));
+      const baseMs = Number(intervalMs || vaultSyncState.pollMs || 15000);
+      const backoffMs = Math.min(baseMs * 2 ** Math.min(vaultSyncState.consecutiveFailures, 4), MAX_BACKOFF_MS);
+      timer = scheduleNext(tick, backoffMs);
       timer.unref?.();
     }
   };
@@ -63,9 +110,76 @@ export function startVaultWatcher(getConfig, { intervalMs } = {}) {
 }
 
 export function getVaultImportStatus() {
+  const latestRun = listVaultSyncRuns(1)[0] || null;
   return {
+    sync: getVaultSyncState(),
+    latestRun,
+    runs: listVaultSyncRuns(10),
     snapshots: listVaultSnapshots(20)
   };
+}
+
+export function getVaultSyncState() {
+  const latestRun = listVaultSyncRuns(1)[0] || null;
+  const lastFinishedAt = vaultSyncState.lastFinishedAt || latestRun?.finishedAt || null;
+  const ageMs = lastFinishedAt ? Date.now() - new Date(lastFinishedAt).getTime() : null;
+  const pollMs = Number(vaultSyncState.pollMs || 15000);
+  const stale = Boolean(ageMs !== null && ageMs > pollMs * 4);
+  const status = computeSyncStatus({ stale, latestRun });
+
+  return {
+    ...vaultSyncState,
+    status,
+    stale,
+    ageMs,
+    latestRun
+  };
+}
+
+function scheduleNext(tick, delayMs) {
+  vaultSyncState.nextRunAt = new Date(Date.now() + delayMs).toISOString();
+  return setTimeout(tick, delayMs);
+}
+
+function finishVaultSyncRun({ status, startedAt, rootPath, result }) {
+  const finishedAt = new Date().toISOString();
+  const failed = Number(result.failed || 0);
+  const isHealthy = status === "ok" || status === "disabled";
+  const nextFailures = isHealthy ? 0 : vaultSyncState.consecutiveFailures + 1;
+  const run = {
+    id: `vault_sync_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    status,
+    rootPath,
+    scanned: result.scanned || result.results?.length || 0,
+    imported: result.imported || 0,
+    skipped: result.skipped || 0,
+    failed,
+    error: result.error || result.message || null,
+    startedAt,
+    finishedAt
+  };
+
+  recordVaultSyncRun(run);
+  vaultSyncState = {
+    ...vaultSyncState,
+    running: false,
+    lastFinishedAt: finishedAt,
+    lastOkAt: isHealthy ? finishedAt : vaultSyncState.lastOkAt,
+    lastErrorAt: isHealthy ? null : finishedAt,
+    lastError: isHealthy ? null : (result.error || `${failed} 个文件同步失败`),
+    consecutiveFailures: nextFailures,
+    lastSummary: run
+  };
+}
+
+function computeSyncStatus({ stale, latestRun }) {
+  if (vaultSyncState.running) return "running";
+  if (!vaultSyncState.enabled) return "disabled";
+  if (vaultSyncState.consecutiveFailures >= 3) return "error";
+  if (vaultSyncState.consecutiveFailures > 0 || latestRun?.status === "degraded") return "degraded";
+  if (stale) return "stale";
+  if (latestRun?.status === "ok" || vaultSyncState.lastOkAt) return "ok";
+  return "unknown";
 }
 
 async function listVaultFiles(rootPath, vault) {
@@ -228,6 +342,7 @@ function summarizeResults(results) {
     imported: results.filter((item) => item.status === "imported").length,
     skipped: results.filter((item) => item.status === "skipped").length,
     failed: results.filter((item) => item.status === "failed").length,
+    scanned: results.length,
     busy: false,
     results
   };

@@ -10,7 +10,7 @@ import { createEvent, getEventWithActions, queryEvents, setEventStatus } from ".
 import { importInbox, startInboxWatcher } from "./inbox-importer.js";
 import { rootDir, webDir } from "./paths.js";
 import { seedIfEmpty } from "./seed.js";
-import { getVaultImportStatus, importVault, startVaultWatcher } from "./vault-importer.js";
+import { getVaultImportStatus, getVaultSyncState, importVault, startVaultWatcher } from "./vault-importer.js";
 
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
@@ -18,6 +18,9 @@ const host = process.env.HOST || "127.0.0.1";
 await seedIfEmpty();
 await importInbox();
 await importAgentOutputs({ recentHours: 24 });
+await importVault(await loadConfig()).catch((error) => {
+  console.error("Initial Vault import failed:", error);
+});
 startInboxWatcher({ intervalMs: Number(process.env.INBOX_POLL_MS || 5000) });
 startVaultWatcher(loadConfig);
 startAgentOutputWatcher({ intervalMs: Number(process.env.AGENT_OUTPUT_POLL_MS || 15000) });
@@ -44,7 +47,11 @@ server.listen(port, host, () => {
 
 async function handleApi(req, res, url) {
   if (req.method === "GET" && url.pathname === "/api/health") {
-    sendJson(res, 200, { ok: true });
+    const vault = getVaultSyncState();
+    sendJson(res, 200, {
+      ok: !["error", "stale"].includes(vault.status),
+      vault
+    });
     return;
   }
 

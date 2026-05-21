@@ -189,11 +189,19 @@ async function loadConfigStatus() {
   ]);
   if (config.vault?.configured) {
     const latestSnapshot = vaultImport.snapshots?.[0];
+    const sync = vaultImport.sync || {};
+    const statusText = vaultSyncStatusText(sync.status);
     const latestText = latestSnapshot
       ? `最近同步：${latestSnapshot.vaultPath} · ${formatDateTime(latestSnapshot.importedAt)}`
       : "等待首次同步";
-    vaultStatus.textContent = `Vault 实时同步：${config.vault.rootPath} · ${latestText}`;
+    const nextText = sync.nextRunAt ? `下次：${formatDateTime(sync.nextRunAt)}` : "下次：等待调度";
+    const runText = sync.latestRun
+      ? `本轮扫描 ${sync.latestRun.scanned} 个，新增 ${sync.latestRun.imported} 个，失败 ${sync.latestRun.failed} 个`
+      : "尚无同步记录";
+    vaultStatus.className = `import-result sync-health ${syncHealthClass(sync.status)}`;
+    vaultStatus.textContent = `${statusText} · Vault：${config.vault.rootPath} · ${latestText} · ${nextText} · ${runText}`;
   } else {
+    vaultStatus.className = "import-result sync-health muted";
     vaultStatus.textContent = "Vault 未启用。可在 config/aiboard.config.json 中开启只读导入。";
   }
 }
@@ -982,4 +990,25 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function vaultSyncStatusText(status) {
+  const byStatus = {
+    ok: "Vault 同步健康",
+    running: "Vault 正在同步",
+    degraded: "Vault 同步有失败项",
+    stale: "Vault 同步过期",
+    error: "Vault 同步异常",
+    disabled: "Vault 未启用",
+    unknown: "Vault 等待同步"
+  };
+  return byStatus[status] || byStatus.unknown;
+}
+
+function syncHealthClass(status) {
+  if (status === "ok") return "sync-ok";
+  if (status === "running") return "sync-running";
+  if (["degraded", "stale"].includes(status)) return "sync-warn";
+  if (status === "error") return "sync-error";
+  return "muted";
 }

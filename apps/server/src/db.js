@@ -97,6 +97,19 @@ db.exec(`
     event_id TEXT REFERENCES events(id) ON DELETE SET NULL,
     imported_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS vault_sync_runs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    root_path TEXT,
+    scanned INTEGER NOT NULL DEFAULT 0,
+    imported INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0,
+    failed INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL
+  );
 `);
 
 const insertEventStmt = db.prepare(`
@@ -260,6 +273,17 @@ const selectSourceImportStmt = db.prepare(`
 const insertSourceImportStmt = db.prepare(`
   INSERT INTO source_imports (source_key, source, event_id, imported_at)
   VALUES (?, ?, ?, ?)
+`);
+
+const insertVaultSyncRunStmt = db.prepare(`
+  INSERT INTO vault_sync_runs (
+    id, status, root_path, scanned, imported, skipped, failed, error, started_at, finished_at
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const selectVaultSyncRunsStmt = db.prepare(`
+  SELECT * FROM vault_sync_runs ORDER BY finished_at DESC LIMIT ?
 `);
 
 export function rowToEvent(row) {
@@ -500,6 +524,36 @@ export function hasSourceImport(sourceKey) {
 
 export function recordSourceImport({ sourceKey, source, eventId }) {
   insertSourceImportStmt.run(sourceKey, source, eventId, new Date().toISOString());
+}
+
+export function recordVaultSyncRun(run) {
+  insertVaultSyncRunStmt.run(
+    run.id,
+    run.status,
+    run.rootPath || null,
+    run.scanned || 0,
+    run.imported || 0,
+    run.skipped || 0,
+    run.failed || 0,
+    run.error || null,
+    run.startedAt,
+    run.finishedAt
+  );
+}
+
+export function listVaultSyncRuns(limit = 20) {
+  return selectVaultSyncRunsStmt.all(Number(limit)).map((row) => ({
+    id: row.id,
+    status: row.status,
+    rootPath: row.root_path,
+    scanned: row.scanned,
+    imported: row.imported,
+    skipped: row.skipped,
+    failed: row.failed,
+    error: row.error,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at
+  }));
 }
 
 export function getStats() {
