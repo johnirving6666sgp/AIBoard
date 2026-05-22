@@ -192,6 +192,16 @@ Smoke test status:
 
 See [Deployment Notes](docs/DEPLOYMENT.md).
 
+## Cloudflare Workers
+
+The Worker project name is configured in [wrangler.toml](wrangler.toml):
+
+```toml
+name = "aiboardhk"
+```
+
+This Workers configuration currently deploys the static AIBoard shell from `apps/web/public`. The live local features that depend on this machine, such as Vault file reads, SQLite, OpenClaw, Hermes, and `launchd`, still run on the local deployment at `http://127.0.0.1:4173`.
+
 For a local always-on service:
 
 ```bash
