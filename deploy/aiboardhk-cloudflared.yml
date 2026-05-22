@@ -1,0 +1,9 @@
+tunnel: 24261087-9064-45d8-85af-47a9cdba31a9
+credentials-file: /Users/lobai/.cloudflared/24261087-9064-45d8-85af-47a9cdba31a9.json
+
+ingress:
+  - hostname: aiboardhk.giantdawn.com
+    service: http://127.0.0.1:4173
+  - hostname: board.giantdawn.com
+    service: http://127.0.0.1:4173
+  - service: http_status:404
