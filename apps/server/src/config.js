@@ -8,7 +8,7 @@ const defaultConfig = {
     rootPath: "",
     researchQueuePath: "研究队列.md",
     trackingPath: "持仓与跟踪.md",
-    watchFolders: ["companies", "sectors", "governor"],
+    watchFolders: ["companies", "sectors", "governor", "A股研究", "美股研究", "港股研究", "日股研究", "operations"],
     pollMs: 15000
   }
 };

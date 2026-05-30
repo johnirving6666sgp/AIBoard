@@ -85,7 +85,7 @@ async function importSessionFile(source, filePath) {
         continue;
       }
 
-      const sourceKey = `${source}:${filePath}:${parsed.id || hash(line)}`;
+      const sourceKey = sourceImportKey({ source, filePath, parsed, line });
       if (hasSourceImport(sourceKey)) {
         results.push({ status: "skipped", reason: "duplicate", sourceKey });
         continue;
@@ -108,6 +108,13 @@ async function importSessionFile(source, filePath) {
   }
 
   return results;
+}
+
+function sourceImportKey({ source, filePath, parsed, line }) {
+  if (parsed.errorFingerprint) {
+    return `${source}:error:${parsed.errorFingerprint}`;
+  }
+  return `${source}:${filePath}:${parsed.id || hash(line)}`;
 }
 
 function parseHermesItem(item) {
@@ -140,7 +147,8 @@ function parseOpenClawItem(item) {
       priority: "high",
       title: "OpenClaw session 错误",
       summary: error,
-      rawContent: JSON.stringify(item, null, 2)
+      rawContent: JSON.stringify(item, null, 2),
+      errorFingerprint: hash(`openclaw:${error}`)
     };
   }
 

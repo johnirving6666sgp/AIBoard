@@ -388,7 +388,7 @@ export function listEvents(filters = {}) {
   const source = filters.source || null;
   const type = filters.type || null;
   const q = filters.q ? `%${filters.q}%` : null;
-  const limit = Number(filters.limit || 100);
+  const limit = Number(filters.limit || 500);
   return selectEventsStmt
     .all(status, status, source, source, type, type, q, q, q, q, q, limit)
     .map(rowToEvent);

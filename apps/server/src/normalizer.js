@@ -65,6 +65,13 @@ function summarize(rawContent, fallbackTitle) {
 
 function inferType(rawContent, vaultPath = "") {
   const text = `${vaultPath}\n${rawContent}`.toLowerCase();
+  if (vaultPath.startsWith("A股研究/日报")) return "cn_market_report";
+  if (vaultPath.includes("龙头评分池")) return "limit_up_report";
+  if (vaultPath.startsWith("A股研究")) return "cn_market_report";
+  if (vaultPath.startsWith("美股研究")) return "us_market_report";
+  if (vaultPath.startsWith("港股研究")) return "hk_market_report";
+  if (vaultPath.startsWith("日股研究")) return "jp_market_report";
+  if (vaultPath.startsWith("operations")) return "system_report";
   if (text.includes("研究队列") || text.includes("research queue")) return "research_queue";
   if (text.includes("持仓") || text.includes("tracking") || text.includes("watchlist")) return "tracking_update";
   if (text.includes("approve") || text.includes("批准") || text.includes("需要你")) return "question";
@@ -79,6 +86,7 @@ function inferPriority(rawContent, type) {
   const text = rawContent.toLowerCase();
   if (text.includes("urgent") || text.includes("紧急")) return "urgent";
   if (type === "alert" || text.includes("high priority") || text.includes("高优先级")) return "high";
+  if (["cn_market_report", "limit_up_report"].includes(type) && /涨停|龙头|命中|主线|预报/.test(rawContent)) return "high";
   if (type === "status") return "low";
   return "normal";
 }
@@ -87,6 +95,7 @@ function inferTags(rawContent, source, type) {
   const tags = new Set([source, type]);
   const text = rawContent.toLowerCase();
   if (text.includes("market") || text.includes("市场")) tags.add("market");
+  if (text.includes("a股") || text.includes("涨停") || text.includes("龙头")) tags.add("a_share");
   if (text.includes("sector") || text.includes("行业")) tags.add("sector");
   if (text.includes("company") || text.includes("公司")) tags.add("company");
   if (text.includes("governor")) tags.add("governor");

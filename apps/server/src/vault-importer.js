@@ -275,6 +275,13 @@ function inferVaultType(vaultPath, vault) {
   if (vaultPath === vault.trackingPath || vaultPath.includes("持仓") || vaultPath.toLowerCase().includes("tracking")) {
     return "tracking_update";
   }
+  if (vaultPath.startsWith("A股研究/日报")) return "cn_market_report";
+  if (vaultPath.includes("龙头评分池")) return "limit_up_report";
+  if (vaultPath.startsWith("A股研究")) return "cn_market_report";
+  if (vaultPath.startsWith("美股研究")) return "us_market_report";
+  if (vaultPath.startsWith("港股研究")) return "hk_market_report";
+  if (vaultPath.startsWith("日股研究")) return "jp_market_report";
+  if (vaultPath.startsWith("operations")) return "system_report";
   if (vaultPath.startsWith("companies")) return "artifact";
   if (vaultPath.startsWith("sectors")) return "finding";
   if (vaultPath.startsWith("governor")) return "task";
@@ -288,7 +295,21 @@ function inferVaultTitle(vaultPath, body, type) {
 }
 
 function shouldCreateVaultEvent(input, vaultPath) {
-  if (["research_queue", "tracking_update", "finding", "task", "question", "alert", "decision"].includes(input.type)) {
+  if ([
+    "research_queue",
+    "tracking_update",
+    "finding",
+    "task",
+    "question",
+    "alert",
+    "decision",
+    "cn_market_report",
+    "limit_up_report",
+    "us_market_report",
+    "hk_market_report",
+    "jp_market_report",
+    "system_report"
+  ].includes(input.type)) {
     return Boolean(input.rawContent.trim());
   }
 

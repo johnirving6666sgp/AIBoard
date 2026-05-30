@@ -37,6 +37,12 @@ const labels = {
   finding: "发现",
   artifact: "产出",
   status: "状态",
+  cn_market_report: "A股日报",
+  limit_up_report: "涨停/龙头",
+  us_market_report: "美股成果",
+  hk_market_report: "港股成果",
+  jp_market_report: "日股成果",
+  system_report: "系统报告",
   alert: "提醒",
   question: "待确认",
   decision: "决策",
@@ -67,6 +73,7 @@ const viewLabels = {
   now: "现在",
   research_flow: "研究全局",
   research_queue: "待研究候选",
+  cn_market: "A股成果",
   activity: "智能体动态",
   artifacts: "产出文件",
   tracking_update: "持仓跟踪",
@@ -186,9 +193,10 @@ async function loadAll() {
 
 function renderCockpit() {
   const primary = state.events.filter(isPrimaryEvent);
-  const needTriage = primary.filter((event) => ["new", "triaged"].includes(event.status));
+  const needTriage = primary.filter(isActionableNow);
   const highPriority = needTriage.filter((event) => ["high", "urgent"].includes(event.priority));
   const researchQueue = primary.filter((event) => event.type === "research_queue");
+  const cnMarket = state.events.filter(isCnMarketEvent);
   const queueCommands = openClawQueueCommands(state.commands);
   const runningCommands = queueCommands.filter((command) => ["dispatched", "running"].includes(command.status));
   const results = openClawResults();
@@ -204,6 +212,11 @@ function renderCockpit() {
       <span>待研究候选</span>
       <strong>${researchQueue.length}</strong>
       <small>Hermes / Governor 候选池</small>
+    </button>
+    <button class="cockpit-card ${cnMarket.length ? "is-active" : ""}" data-cockpit-view="cn_market">
+      <span>A股成果</span>
+      <strong>${cnMarket.length}</strong>
+      <small>日报 / 涨停 / 龙头评分</small>
     </button>
     <button class="cockpit-card ${queueCommands.length ? "is-active" : ""}" data-cockpit-view="activity">
       <span>OpenClaw 流转</span>
@@ -248,6 +261,7 @@ async function loadConfigStatus() {
 
 async function loadEvents() {
   const params = new URLSearchParams();
+  params.set("limit", "500");
   if (state.query) params.set("q", state.query);
   state.events = await api(`/api/events?${params}`);
   if (state.selectedId && !isCompanyPackId(state.selectedId) && !state.events.some((event) => event.id === state.selectedId)) {
@@ -327,8 +341,9 @@ function renderTabCounts() {
 
 function countForView(view) {
   const primary = state.events.filter(isPrimaryEvent);
-  if (view === "now") return primary.filter((event) => ["new", "triaged"].includes(event.status)).length;
+  if (view === "now") return primary.filter(isActionableNow).length;
   if (view === "research_flow") return state.events.filter(isResearchFlowEvent).length;
+  if (view === "cn_market") return state.events.filter(isCnMarketEvent).length;
   if (view === "activity") return primary.filter((event) => ["hermes", "openclaw"].includes(event.source)).length;
   if (view === "artifacts") return state.events.filter((event) => event.type === "artifact" && !isDebugNoise(event)).length;
   if (view === "debug") return state.events.filter(isDebugNoise).length;
@@ -921,10 +936,13 @@ function actionLabel(action) {
 function filteredEvents() {
   const visibleEvents = state.events.filter(isPrimaryEvent);
   if (state.view === "now") {
-    return visibleEvents.filter((event) => ["new", "triaged"].includes(event.status));
+    return visibleEvents.filter(isActionableNow);
   }
   if (state.view === "research_flow") {
     return state.events.filter(isResearchFlowEvent);
+  }
+  if (state.view === "cn_market") {
+    return state.events.filter(isCnMarketEvent);
   }
   if (state.view === "activity") {
     return visibleEvents.filter((event) => ["hermes", "openclaw"].includes(event.source));
@@ -944,19 +962,32 @@ function filteredEvents() {
 function isResearchFlowEvent(event) {
   if (isDebugNoise(event)) return false;
   const tags = event.tags || [];
-  if (["research_queue", "tracking_update", "decision"].includes(event.type)) return true;
-  if (event.vaultPath && /研究队列|持仓|tracking|sectors|governor/i.test(event.vaultPath)) return true;
+  if (["research_queue", "tracking_update", "decision", "cn_market_report", "limit_up_report", "us_market_report", "hk_market_report", "jp_market_report"].includes(event.type)) return true;
+  if (event.vaultPath && /研究队列|持仓|tracking|sectors|governor|A股研究|美股研究|港股研究|日股研究/i.test(event.vaultPath)) return true;
   return tags.some((tag) => ["research", "market", "sector", "company", "governor"].includes(String(tag).toLowerCase()));
 }
 
 function isPrimaryEvent(event) {
   if (isDebugNoise(event)) return false;
   if (event.status === "archived") return false;
-  if (["research_queue", "tracking_update", "finding", "task", "question", "alert", "decision", "status"].includes(event.type)) {
+  if (["research_queue", "tracking_update", "finding", "task", "question", "alert", "decision", "status", "cn_market_report", "limit_up_report", "us_market_report", "hk_market_report", "jp_market_report", "system_report"].includes(event.type)) {
     return true;
   }
   if (event.source !== "vault" && event.type === "artifact") return true;
   return false;
+}
+
+function isActionableNow(event) {
+  if (!["new", "triaged", "in_progress"].includes(event.status)) return false;
+  if (isDebugNoise(event)) return false;
+  return ["research_queue", "tracking_update", "question", "alert", "decision", "task"].includes(event.type);
+}
+
+function isCnMarketEvent(event) {
+  if (isDebugNoise(event) || event.status === "archived") return false;
+  return event.type === "cn_market_report"
+    || event.type === "limit_up_report"
+    || String(event.vaultPath || "").startsWith("A股研究/");
 }
 
 function isDebugNoise(event) {
