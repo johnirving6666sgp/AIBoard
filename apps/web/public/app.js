@@ -559,6 +559,10 @@ function renderArtifacts() {
 }
 
 function renderStructuredSummary(event) {
+  if (event.type === "cn_market_report") {
+    return renderAshareReport(event.rawContent || event.summary || "");
+  }
+
   const rows = parseMarkdownTableRows(event.rawContent || event.summary || "");
   if (rows.length) {
     if (!isCandidateTable(rows, event)) {
@@ -572,6 +576,127 @@ function renderStructuredSummary(event) {
     `;
   }
   return `<p class="detail-summary">${escapeHtml(event.summary)}</p>`;
+}
+
+function renderAshareReport(content) {
+  const sections = parseMarkdownSections(content);
+  if (!sections.length) return `<p class="detail-summary">${escapeHtml(content)}</p>`;
+
+  const roundOrder = ["第一报", "第二报", "第三报", "全日复盘"];
+  const sortedSections = [...sections].sort((a, b) => {
+    const aIndex = roundOrder.findIndex((name) => a.title.includes(name));
+    const bIndex = roundOrder.findIndex((name) => b.title.includes(name));
+    const safeA = aIndex === -1 ? 99 : aIndex;
+    const safeB = bIndex === -1 ? 99 : bIndex;
+    return safeA - safeB;
+  });
+
+  return `
+    <div class="ashare-report">
+      ${sortedSections.map((section) => `
+        <article class="report-round">
+          <div class="report-round-head">
+            <strong>${escapeHtml(section.title)}</strong>
+            ${badge(reportRoundBadgeClass(section.title), reportRoundStatus(section.title))}
+          </div>
+          ${renderMarkdownBlocks(section.body)}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function parseMarkdownSections(content) {
+  const lines = String(content || "").split(/\r?\n/);
+  const sections = [];
+  let current = null;
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^##\s+(.+)$/);
+    if (sectionMatch) {
+      if (current) sections.push(current);
+      current = { title: sectionMatch[1].trim(), body: [] };
+      continue;
+    }
+    if (current) current.body.push(line);
+  }
+
+  if (current) sections.push(current);
+  return sections.filter((section) => section.title && section.body.join("\n").trim());
+}
+
+function renderMarkdownBlocks(lines) {
+  const blocks = [];
+  let paragraph = [];
+  let table = [];
+  let list = [];
+
+  const flushParagraph = () => {
+    const text = paragraph.join(" ").trim();
+    if (text) blocks.push(`<p>${escapeHtml(text)}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (list.length) blocks.push(`<ul>${list.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+    list = [];
+  };
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = parseMarkdownTableRows(table.join("\n"), { keepHeader: true });
+    if (rows.length) blocks.push(renderReadonlyTable(rows, { limit: 12, showMoreText: "查看原始输出可看完整表格。" }));
+    table = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      continue;
+    }
+    if (/^###\s+/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      blocks.push(`<h4>${escapeHtml(trimmed.replace(/^###\s+/, ""))}</h4>`);
+      continue;
+    }
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      flushParagraph();
+      flushList();
+      table.push(trimmed);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(trimmed) || /^[-*]\s+/.test(trimmed)) {
+      flushParagraph();
+      flushTable();
+      list.push(trimmed.replace(/^\d+\.\s+|^[-*]\s+/, ""));
+      continue;
+    }
+    flushList();
+    flushTable();
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushTable();
+  return blocks.join("");
+}
+
+function reportRoundBadgeClass(title) {
+  if (title.includes("复盘")) return "high";
+  if (title.includes("第三报")) return "openclaw";
+  return "tag";
+}
+
+function reportRoundStatus(title) {
+  if (title.includes("复盘")) return "收盘复盘";
+  if (title.includes("第一报")) return "盘前/早盘";
+  if (title.includes("第二报")) return "盘中";
+  if (title.includes("第三报")) return "确认";
+  return "报告";
 }
 
 function compactEventSummary(event) {
@@ -609,20 +734,21 @@ function isCandidateRow(row) {
   return Boolean(note && (hasDate || hasMarket) && hasTicker && (hasPriority || hasResearchStatus));
 }
 
-function renderReadonlyTable(rows) {
+function renderReadonlyTable(rows, options = {}) {
+  const limit = options.limit || 16;
   const width = Math.max(...rows.map((row) => row.length));
   return `
     <div class="readonly-table-wrap">
       <table class="readonly-table">
         <tbody>
-          ${rows.slice(0, 16).map((row) => `
+          ${rows.slice(0, limit).map((row) => `
             <tr>
               ${Array.from({ length: width }).map((_, index) => `<td>${escapeHtml(row[index] || "")}</td>`).join("")}
             </tr>
           `).join("")}
         </tbody>
       </table>
-      ${rows.length > 16 ? `<p class="muted">还有 ${rows.length - 16} 行，查看原始输出可看完整内容。</p>` : ""}
+      ${rows.length > limit ? `<p class="muted">还有 ${rows.length - limit} 行，${escapeHtml(options.showMoreText || "查看原始输出可看完整内容。")}</p>` : ""}
     </div>
   `;
 }
@@ -778,7 +904,7 @@ function candidateStateKind(message) {
   return "";
 }
 
-function parseMarkdownTableRows(content) {
+function parseMarkdownTableRows(content, options = {}) {
   return String(content || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -786,7 +912,7 @@ function parseMarkdownTableRows(content) {
     .filter((line) => !/^\|\s*-+/.test(line))
     .map((line) => line.split("|").slice(1, -1).map((cell) => cell.trim()))
     .filter((cells) => cells.length >= 4)
-    .filter((cells) => !["日期", "市场"].includes(cells[0]));
+    .filter((cells) => options.keepHeader || !["日期", "市场"].includes(cells[0]));
 }
 
 function renderCommands() {

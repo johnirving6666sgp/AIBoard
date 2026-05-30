@@ -466,6 +466,52 @@ textarea:focus {
   font-weight: 650;
 }
 
+.ashare-report {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.report-round {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfc;
+  padding: 12px;
+}
+
+.report-round-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.report-round-head strong {
+  font-size: 16px;
+}
+
+.report-round h4 {
+  margin: 12px 0 6px;
+  color: #203138;
+  font-size: 14px;
+}
+
+.report-round p,
+.report-round li {
+  color: #35464e;
+  line-height: 1.55;
+}
+
+.report-round ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.report-round .readonly-table-wrap {
+  margin-top: 8px;
+}
+
 .module-list {
   display: grid;
   gap: 8px;
