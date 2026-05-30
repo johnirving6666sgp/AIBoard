@@ -380,8 +380,8 @@ function groupCompanyResearchEvents(events) {
   }
 
   return output.sort((a, b) => {
-    const aTime = a.kind === "company_pack" ? newestTime(a.events) : a.createdAt;
-    const bTime = b.kind === "company_pack" ? newestTime(b.events) : b.createdAt;
+    const aTime = a.kind === "company_pack" ? newestTime(a.events) : eventSortTime(a);
+    const bTime = b.kind === "company_pack" ? newestTime(b.events) : eventSortTime(b);
     return String(bTime || "").localeCompare(String(aTime || ""));
   });
 }
@@ -408,7 +408,33 @@ function moduleOrder(title) {
 }
 
 function newestTime(events) {
-  return events.map((event) => event.createdAt).filter(Boolean).sort().at(-1) || "";
+  return events.map((event) => eventSortTime(event)).filter(Boolean).sort().at(-1) || "";
+}
+
+function eventSortTime(event, view = state.view) {
+  const reportTime = marketReportSortTime(event);
+  if (reportTime) return reportTime;
+  if (view === "cn_market" && isCnMarketEvent(event)) return "0000-01-01T00:00:00.000Z";
+  return event.createdAt || "";
+}
+
+function marketReportSortTime(event) {
+  const text = `${event.vaultPath || ""}\n${event.title || ""}`;
+  const dashedDate = text.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  if (dashedDate) return `${dashedDate[1]}T23:59:59.999Z`;
+
+  const compactDate = text.match(/(?:^|[^\d])(20\d{6})(?:[^\d]|$)/);
+  if (!compactDate) return "";
+  const value = compactDate[1];
+  return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T23:59:59.999Z`;
+}
+
+function sortEventsForView(events, view = state.view) {
+  return [...events].sort((a, b) => {
+    const timeCompare = String(eventSortTime(b, view)).localeCompare(String(eventSortTime(a, view)));
+    if (timeCompare !== 0) return timeCompare;
+    return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+  });
 }
 
 function compactCompanyPackSummary(pack) {
@@ -1061,28 +1087,25 @@ function actionLabel(action) {
 
 function filteredEvents() {
   const visibleEvents = state.events.filter(isPrimaryEvent);
+  let events;
   if (state.view === "now") {
-    return visibleEvents.filter(isActionableNow);
+    events = visibleEvents.filter(isActionableNow);
+  } else if (state.view === "research_flow") {
+    events = state.events.filter(isResearchFlowEvent);
+  } else if (state.view === "cn_market") {
+    events = state.events.filter(isCnMarketEvent);
+  } else if (state.view === "activity") {
+    events = visibleEvents.filter((event) => ["hermes", "openclaw"].includes(event.source));
+  } else if (state.view === "artifacts") {
+    events = state.events.filter((event) => event.type === "artifact" && !isDebugNoise(event));
+  } else if (state.view === "debug") {
+    events = state.events.filter(isDebugNoise);
+  } else if (state.view === "history") {
+    events = state.events;
+  } else {
+    events = visibleEvents.filter((event) => event.type === state.view);
   }
-  if (state.view === "research_flow") {
-    return state.events.filter(isResearchFlowEvent);
-  }
-  if (state.view === "cn_market") {
-    return state.events.filter(isCnMarketEvent);
-  }
-  if (state.view === "activity") {
-    return visibleEvents.filter((event) => ["hermes", "openclaw"].includes(event.source));
-  }
-  if (state.view === "artifacts") {
-    return state.events.filter((event) => event.type === "artifact" && !isDebugNoise(event));
-  }
-  if (state.view === "debug") {
-    return state.events.filter(isDebugNoise);
-  }
-  if (state.view === "history") {
-    return state.events;
-  }
-  return visibleEvents.filter((event) => event.type === state.view);
+  return sortEventsForView(events, state.view);
 }
 
 function isResearchFlowEvent(event) {
