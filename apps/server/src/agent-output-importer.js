@@ -7,19 +7,29 @@ import { createEvent } from "./event-service.js";
 const DEFAULT_SOURCES = [
   {
     source: "hermes",
-    root: "/Users/lobai/.hermes/sessions",
+    root: process.env.AIBOARD_HERMES_SESSIONS || "/Users/lobai/.hermes/sessions",
     pattern: /\.jsonl$/
   },
   {
     source: "openclaw",
-    root: "/Users/lobai/.openclaw/agents/main/sessions",
+    root: process.env.AIBOARD_OPENCLAW_SESSIONS || "/Users/lobai/.openclaw/agents/main/sessions",
     pattern: /\.jsonl$/
   }
 ];
 
+// session 导入模式：
+//   errors（默认）—— 只导入错误告警。正常输出已经通过命令回流和 Vault 同步进入 AIBoard，
+//                    全量导入只会每天制造上百条需要手动归档的噪音事件。
+//   full          —— 旧行为，导入所有 assistant 输出。
+//   off           —— 完全关闭 session 导入。
+const IMPORT_MODE = process.env.AIBOARD_AGENT_SESSION_IMPORT || "errors";
+
 let importInProgress = false;
 
 export async function importAgentOutputs({ recentHours = 24 } = {}) {
+  if (IMPORT_MODE === "off") {
+    return { imported: 0, skipped: 0, failed: 0, busy: false, disabled: true, results: [] };
+  }
   if (importInProgress) {
     return { imported: 0, skipped: 0, failed: 0, busy: true, results: [] };
   }
@@ -82,6 +92,12 @@ async function importSessionFile(source, filePath) {
       const parsed = source === "openclaw" ? parseOpenClawItem(item) : parseHermesItem(item);
       if (!parsed) {
         results.push({ status: "skipped", reason: "not-importable" });
+        continue;
+      }
+
+      // 默认只导入错误告警，正常输出交给命令回流和 Vault 同步。
+      if (IMPORT_MODE !== "full" && parsed.type !== "alert") {
+        results.push({ status: "skipped", reason: "non-error-session-output" });
         continue;
       }
 

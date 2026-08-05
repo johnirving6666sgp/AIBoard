@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getVaultSnapshot, listVaultSnapshots, listVaultSyncRuns, recordVaultSyncRun, upsertVaultSnapshot } from "./db.js";
-import { createEvent } from "./event-service.js";
+import { getEvent, getVaultSnapshot, listVaultSnapshots, listVaultSyncRuns, recordVaultSyncRun, upsertVaultSnapshot } from "./db.js";
+import { createEvent, updateEventFromSource } from "./event-service.js";
 import { extractMarkdownTitle, parseFrontmatter } from "./inbox-importer.js";
 
 const MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
@@ -151,7 +151,7 @@ function finishVaultSyncRun({ status, startedAt, rootPath, result }) {
     status,
     rootPath,
     scanned: result.scanned || result.results?.length || 0,
-    imported: result.imported || 0,
+    imported: (result.imported || 0) + (result.updated || 0),
     skipped: result.skipped || 0,
     failed,
     error: result.error || result.message || null,
@@ -217,7 +217,7 @@ async function walkMarkdownFiles(dir) {
   return files;
 }
 
-async function importVaultFile(rootPath, filePath, vault) {
+async function importVaultFile(rootPath, filePath, vault, { force = false } = {}) {
   const vaultPath = path.relative(rootPath, filePath);
 
   try {
@@ -225,14 +225,22 @@ async function importVaultFile(rootPath, filePath, vault) {
     const contentHash = hashContent(content);
     const existing = getVaultSnapshot(vaultPath);
 
-    if (existing?.content_hash === contentHash) {
+    if (!force && existing?.content_hash === contentHash) {
       return { vaultPath, status: "skipped", reason: "unchanged" };
     }
 
     const input = parseVaultFile(vaultPath, content, vault);
     if (!shouldCreateVaultEvent(input, vaultPath)) {
-      upsertVaultSnapshot({ vaultPath, contentHash, eventId: null });
+      upsertVaultSnapshot({ vaultPath, contentHash, eventId: existing?.event_id || null });
       return { vaultPath, status: "skipped", reason: "low-signal-vault-file" };
+    }
+
+    // 同一路径已有事件：更新原事件，避免每次内容变化都生成重复卡片。
+    const existingEvent = existing?.event_id ? getEvent(existing.event_id) : null;
+    if (existingEvent) {
+      const updated = await updateEventFromSource(existingEvent, input);
+      upsertVaultSnapshot({ vaultPath, contentHash, eventId: existingEvent.id });
+      return { vaultPath, status: "updated", eventId: existingEvent.id, title: updated.title };
     }
 
     const event = await createEvent(input);
@@ -241,6 +249,28 @@ async function importVaultFile(rootPath, filePath, vault) {
   } catch (error) {
     return { vaultPath, status: "failed", error: error.message };
   }
+}
+
+// 单文件强制重读：绕过 content_hash 短路，用于外部脚本修复文件后立即刷新。
+export async function reimportVaultFile(config, vaultPathInput) {
+  const vault = config?.vault;
+  if (!vault?.enabled || !vault.rootPath) {
+    return { ok: false, error: "Vault import is disabled." };
+  }
+
+  const rootPath = path.resolve(vault.rootPath);
+  const requested = String(vaultPathInput || "").trim();
+  if (!requested) {
+    return { ok: false, error: "vaultPath is required." };
+  }
+
+  const absolute = path.resolve(rootPath, requested);
+  if (absolute !== rootPath && !absolute.startsWith(rootPath + path.sep)) {
+    return { ok: false, error: "vaultPath is outside the vault root." };
+  }
+
+  const result = await importVaultFile(rootPath, absolute, vault, { force: true });
+  return { ok: result.status !== "failed", ...result };
 }
 
 function parseVaultFile(vaultPath, content, vault) {
@@ -361,6 +391,7 @@ function summarizeResults(results) {
   return {
     enabled: true,
     imported: results.filter((item) => item.status === "imported").length,
+    updated: results.filter((item) => item.status === "updated").length,
     skipped: results.filter((item) => item.status === "skipped").length,
     failed: results.filter((item) => item.status === "failed").length,
     scanned: results.length,

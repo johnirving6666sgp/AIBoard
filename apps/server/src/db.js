@@ -110,7 +110,24 @@ db.exec(`
     started_at TEXT NOT NULL,
     finished_at TEXT NOT NULL
   );
+
+  CREATE INDEX IF NOT EXISTS idx_events_vault_path ON events(vault_path);
+  CREATE INDEX IF NOT EXISTS idx_events_status ON events(status);
+  CREATE INDEX IF NOT EXISTS idx_artifacts_event_id ON artifacts(event_id);
+  CREATE INDEX IF NOT EXISTS idx_commands_status ON commands(status);
 `);
+
+// 轻量迁移：为 commands 表补充状态机所需的列（旧库自动升级）。
+const commandColumns = new Set(db.prepare("PRAGMA table_info(commands)").all().map((column) => column.name));
+const addCommandColumn = (name, ddl) => {
+  if (!commandColumns.has(name)) db.exec(`ALTER TABLE commands ADD COLUMN ${ddl}`);
+};
+addCommandColumn("dispatched_at", "dispatched_at TEXT");
+addCommandColumn("started_at", "started_at TEXT");
+addCommandColumn("finished_at", "finished_at TEXT");
+addCommandColumn("result_event_id", "result_event_id TEXT");
+addCommandColumn("error", "error TEXT");
+addCommandColumn("attempts", "attempts INTEGER NOT NULL DEFAULT 0");
 
 const insertEventStmt = db.prepare(`
   INSERT INTO events (
@@ -122,6 +139,19 @@ const insertEventStmt = db.prepare(`
 
 const updateMarkdownPathStmt = db.prepare(`
   UPDATE events SET markdown_path = ?, updated_at = ? WHERE id = ?
+`);
+
+const updateEventContentStmt = db.prepare(`
+  UPDATE events SET
+    type = ?,
+    status = ?,
+    priority = ?,
+    title = ?,
+    summary = ?,
+    raw_content = ?,
+    tags_json = ?,
+    updated_at = ?
+  WHERE id = ?
 `);
 
 const updateEventStatusStmt = db.prepare(`
@@ -214,6 +244,30 @@ const updateCommandStatusStmt = db.prepare(`
   UPDATE commands SET status = ? WHERE id = ?
 `);
 
+const dispatchCommandStmt = db.prepare(`
+  UPDATE commands SET status = 'dispatched', dispatched_at = ?, error = NULL WHERE id = ?
+`);
+
+const startCommandStmt = db.prepare(`
+  UPDATE commands SET status = 'running', started_at = ?, attempts = attempts + 1 WHERE id = ?
+`);
+
+const completeCommandStmt = db.prepare(`
+  UPDATE commands SET status = 'completed', finished_at = ?, result_event_id = ?, error = NULL WHERE id = ?
+`);
+
+const failCommandStmt = db.prepare(`
+  UPDATE commands SET status = ?, finished_at = ?, result_event_id = ?, error = ? WHERE id = ?
+`);
+
+const selectDispatchedCommandsStmt = db.prepare(`
+  SELECT * FROM commands WHERE status = 'dispatched' ORDER BY created_at ASC LIMIT ?
+`);
+
+const resetOrphanRunningStmt = db.prepare(`
+  UPDATE commands SET status = 'dispatched' WHERE status = 'running'
+`);
+
 const countCommandsByStatusStmt = db.prepare(`
   SELECT status, COUNT(*) as count FROM commands GROUP BY status
 `);
@@ -286,6 +340,18 @@ const selectVaultSyncRunsStmt = db.prepare(`
   SELECT * FROM vault_sync_runs ORDER BY finished_at DESC LIMIT ?
 `);
 
+const pruneVaultSyncRunsStmt = db.prepare(`
+  DELETE FROM vault_sync_runs
+  WHERE id NOT IN (
+    SELECT id FROM vault_sync_runs ORDER BY finished_at DESC LIMIT 5000
+  )
+`);
+
+let vaultSyncWritesSincePrune = 0;
+
+// Keep health history useful without letting a 15-second poll grow forever.
+pruneVaultSyncRunsStmt.run();
+
 export function rowToEvent(row) {
   if (!row) return null;
   return {
@@ -340,7 +406,13 @@ export function commandRow(row) {
     payload: JSON.parse(row.payload_json || "{}"),
     status: row.status,
     createdBy: row.created_by,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    dispatchedAt: row.dispatched_at || null,
+    startedAt: row.started_at || null,
+    finishedAt: row.finished_at || null,
+    resultEventId: row.result_event_id || null,
+    error: row.error || null,
+    attempts: row.attempts || 0
   };
 }
 
@@ -368,6 +440,21 @@ export function insertEvent(event) {
 
 export function updateMarkdownPath(id, markdownPath) {
   updateMarkdownPathStmt.run(markdownPath, new Date().toISOString(), id);
+  return getEvent(id);
+}
+
+export function updateEventContent(id, fields) {
+  updateEventContentStmt.run(
+    fields.type,
+    fields.status,
+    fields.priority,
+    fields.title,
+    fields.summary,
+    fields.rawContent,
+    JSON.stringify(fields.tags || []),
+    new Date().toISOString(),
+    id
+  );
   return getEvent(id);
 }
 
@@ -444,6 +531,36 @@ export function listEventCommands(eventId) {
 
 export function setCommandStatus(id, status) {
   updateCommandStatusStmt.run(status, id);
+}
+
+export function markCommandDispatched(id) {
+  dispatchCommandStmt.run(new Date().toISOString(), id);
+  return getCommand(id);
+}
+
+export function markCommandRunning(id) {
+  startCommandStmt.run(new Date().toISOString(), id);
+  return getCommand(id);
+}
+
+export function markCommandCompleted(id, resultEventId = null) {
+  completeCommandStmt.run(new Date().toISOString(), resultEventId, id);
+  return getCommand(id);
+}
+
+// status 为 'failed'（终态）或 'dispatched'（记录错误后重新排队重试）。
+export function markCommandFailed(id, { status = "failed", error = null, resultEventId = null } = {}) {
+  failCommandStmt.run(status, new Date().toISOString(), resultEventId, error, id);
+  return getCommand(id);
+}
+
+export function listDispatchedCommands(limit = 1) {
+  return selectDispatchedCommandsStmt.all(Number(limit)).map(commandRow);
+}
+
+// 进程重启后，把上次遗留的 running 命令重新排队（单进程执行，不可能还在跑）。
+export function resetOrphanRunningCommands() {
+  resetOrphanRunningStmt.run();
 }
 
 export function upsertCandidateStatus({ eventId, candidateKey, status, candidate }) {
@@ -539,6 +656,12 @@ export function recordVaultSyncRun(run) {
     run.startedAt,
     run.finishedAt
   );
+
+  vaultSyncWritesSincePrune += 1;
+  if (vaultSyncWritesSincePrune >= 100) {
+    pruneVaultSyncRunsStmt.run();
+    vaultSyncWritesSincePrune = 0;
+  }
 }
 
 export function listVaultSyncRuns(limit = 20) {

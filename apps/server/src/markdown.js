@@ -18,6 +18,15 @@ export async function writeMarkdownArchive(event, actions = []) {
   return relativePath;
 }
 
+// 覆盖已有归档文件（事件内容更新时复用同一路径，不再新建文件）。
+export async function rewriteMarkdownArchive(event, actions = []) {
+  if (!event?.markdownPath) return null;
+  const absolutePath = path.join(rootDir, event.markdownPath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.writeFile(absolutePath, renderMarkdown(event, actions), "utf8");
+  return event.markdownPath;
+}
+
 export async function appendAuditNote(event, note) {
   if (!event?.markdownPath) return;
   const absolutePath = path.join(rootDir, event.markdownPath);

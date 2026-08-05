@@ -6,10 +6,11 @@ import {
   insertEvent,
   listEventCommands,
   listEvents,
+  updateEventContent,
   updateEventStatus,
   updateMarkdownPath
 } from "./db.js";
-import { appendAuditNote, writeMarkdownArchive } from "./markdown.js";
+import { appendAuditNote, rewriteMarkdownArchive, writeMarkdownArchive } from "./markdown.js";
 import { normalizeInput } from "./normalizer.js";
 
 export async function createEvent(input) {
@@ -29,6 +30,30 @@ export async function createEvent(input) {
   });
 
   return { ...saved, actions };
+}
+
+// 同一 vault_path 的文件内容变化时，更新原事件而不是新建，避免重复卡片。
+export async function updateEventFromSource(existing, input) {
+  const { event } = normalizeInput({
+    ...input,
+    id: existing.id,
+    threadId: existing.threadId,
+    workflowId: existing.workflowId,
+    createdAt: existing.createdAt,
+    // 已归档/已完成的事件收到新内容时重新浮出，其余保持人工设定的状态。
+    status: ["archived", "done"].includes(existing.status) ? "new" : existing.status
+  });
+
+  const saved = updateEventContent(existing.id, event);
+
+  if (existing.markdownPath) {
+    await rewriteMarkdownArchive(saved, saved.actions || []);
+  } else {
+    const markdownPath = await writeMarkdownArchive(saved, saved.actions || []);
+    updateMarkdownPath(existing.id, markdownPath);
+  }
+
+  return getEvent(existing.id);
 }
 
 export function getEventWithActions(id) {
