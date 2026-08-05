@@ -199,6 +199,7 @@ function renderCockpit() {
   const cnMarket = state.events.filter(isCnMarketEvent);
   const queueCommands = openClawQueueCommands(state.commands);
   const runningCommands = queueCommands.filter((command) => ["dispatched", "running"].includes(command.status));
+  const failedCommands = openClawFailedCommands(state.commands);
   const results = openClawResults();
   const candidateDone = Object.values(state.candidateStatuses).filter((status) => normalizeCandidateState(status) === "OpenClaw 已产出").length;
 
@@ -218,10 +219,10 @@ function renderCockpit() {
       <strong>${cnMarket.length}</strong>
       <small>日报 / 涨停 / 龙头评分</small>
     </button>
-    <button class="cockpit-card ${queueCommands.length ? "is-active" : ""}" data-cockpit-view="activity">
+    <button class="cockpit-card ${queueCommands.length || failedCommands.length ? "is-active" : ""} ${failedCommands.length ? "is-hot" : ""}" data-cockpit-view="activity">
       <span>OpenClaw 流转</span>
       <strong>${queueCommands.length}</strong>
-      <small>${runningCommands.length ? `${runningCommands.length} 个执行中` : "等待派发或执行"}</small>
+      <small>${failedCommands.length ? `${failedCommands.length} 个失败待重试` : (runningCommands.length ? `${runningCommands.length} 个执行中` : "等待派发或执行")}</small>
     </button>
     <button class="cockpit-card" data-cockpit-view="artifacts">
       <span>已回流结果</span>
@@ -249,7 +250,7 @@ async function loadConfigStatus() {
       : "等待首次同步";
     const nextText = sync.nextRunAt ? `下次：${formatDateTime(sync.nextRunAt)}` : "下次：等待调度";
     const runText = sync.latestRun
-      ? `本轮扫描 ${sync.latestRun.scanned} 个，新增 ${sync.latestRun.imported} 个，失败 ${sync.latestRun.failed} 个`
+      ? `本轮扫描 ${sync.latestRun.scanned} 个，新增/更新 ${sync.latestRun.imported} 个，失败 ${sync.latestRun.failed} 个`
       : "尚无同步记录";
     vaultStatus.className = `import-result sync-health ${syncHealthClass(sync.status)}`;
     vaultStatus.textContent = `${statusText} · Vault：${config.vault.rootPath} · ${latestText} · ${nextText} · ${runText}`;
@@ -310,6 +311,7 @@ async function renderEvents() {
           <span class="event-toggle">${item.id === state.selectedId ? "收起" : "详情"}</span>
         </div>
         <div class="event-summary">${escapeHtml(item.kind === "company_pack" ? compactCompanyPackSummary(item) : compactEventSummary(item))}</div>
+        ${item.kind !== "company_pack" ? renderRoundChips(item) : ""}
       </button>
       ${item.id === state.selectedId ? '<div id="eventDetail" class="event-detail inline-detail"></div>' : ""}
     </article>
@@ -497,8 +499,9 @@ async function renderDetail(targetEl) {
       ${isDebugNoise(event) ? badge("debug", "调试") : ""}
     </div>
     <h3>${escapeHtml(event.title)}</h3>
+    ${renderRoundChips(event, { withBackfill: true })}
     ${renderStructuredSummary(event)}
-    ${event.vaultPath ? `<p class="muted">Vault: ${escapeHtml(event.vaultPath)}</p>` : ""}
+    ${event.vaultPath ? `<p class="muted">Vault: ${escapeHtml(event.vaultPath)} <button class="secondary-button reimport-button" data-reimport-vault="${escapeHtml(event.vaultPath)}">重新读取 Vault</button></p>` : ""}
     ${event.markdownPath ? `<p class="muted">Markdown: ${escapeHtml(event.markdownPath)}</p>` : ""}
     <div class="tags">
       ${(event.tags || []).map((tag) => badge("tag", tag)).join("")}
@@ -519,6 +522,65 @@ async function renderDetail(targetEl) {
     </section>
   `;
 
+  const backfillButton = targetEl.querySelector("[data-backfill-report]");
+  if (backfillButton) {
+    backfillButton.addEventListener("click", async (clickEvent) => {
+      clickEvent.stopPropagation();
+      backfillButton.disabled = true;
+      backfillButton.textContent = "正在派发补回任务...";
+      const missingRounds = backfillButton.dataset.backfillReport;
+      const reportDate = (String(event.vaultPath || "").match(/(20\d{2}-\d{2}-\d{2})/) || [])[1] || "";
+      try {
+        const command = await api("/api/commands", {
+          method: "POST",
+          body: JSON.stringify({
+            eventId: event.id,
+            target: "hermes",
+            commandType: "backfill_report",
+            payload: {
+              title: `补回 ${reportDate} A股日报缺失段落`,
+              summary: `缺失：${missingRounds}`,
+              rawContent: [
+                `请补全 A股日报文件（Vault 相对路径：${event.vaultPath}，日期：${reportDate}）。`,
+                `当前缺失的段落：${missingRounds}。`,
+                "要求：",
+                "1. 从你的 session 历史中找到该日期对应轮次的实际输出。",
+                "2. 把缺失段落补写进该日报文件，使用二级标题格式（例如 ## 第一报），保持轮次顺序。",
+                "3. 不要改动或重复已有段落；找不到对应输出的轮次，在该段落下注明“session 中无记录”。",
+                "4. 完成后回复补回了哪些段落。不要发送任何外部消息。"
+              ].join("\n")
+            }
+          })
+        });
+        await api(`/api/commands/${command.id}/dispatch`, { method: "POST" });
+        backfillButton.textContent = "已派发给 Hermes，稍后自动刷新";
+      } catch {
+        backfillButton.textContent = "派发失败，点击重试";
+        backfillButton.disabled = false;
+      }
+    });
+  }
+
+  const reimportButton = targetEl.querySelector("[data-reimport-vault]");
+  if (reimportButton) {
+    reimportButton.addEventListener("click", async (clickEvent) => {
+      clickEvent.stopPropagation();
+      reimportButton.disabled = true;
+      reimportButton.textContent = "正在重新读取...";
+      try {
+        const result = await api("/api/vault/reimport", {
+          method: "POST",
+          body: JSON.stringify({ vaultPath: reimportButton.dataset.reimportVault })
+        });
+        reimportButton.textContent = result.status === "failed" ? "读取失败" : "已刷新";
+        await loadAll();
+      } catch {
+        reimportButton.textContent = "读取失败";
+        reimportButton.disabled = false;
+      }
+    });
+  }
+
   const openMarkdown = targetEl.querySelector("[data-open-markdown]");
   if (openMarkdown) {
     openMarkdown.addEventListener("click", async () => {
@@ -527,6 +589,40 @@ async function renderDetail(targetEl) {
       targetEl.querySelector("#markdownPreview").textContent = content;
     });
   }
+
+  targetEl.querySelectorAll("[data-retry-command]").forEach((button) => {
+    button.addEventListener("click", async (clickEvent) => {
+      clickEvent.stopPropagation();
+      button.disabled = true;
+      button.textContent = "重新派发中...";
+      try {
+        await api(`/api/commands/${button.dataset.retryCommand}/dispatch`, { method: "POST" });
+        button.textContent = "已重新派发，等待执行";
+        state.commands = await api("/api/commands?limit=50");
+        renderCommands();
+      } catch {
+        button.textContent = "重派失败，点击重试";
+        button.disabled = false;
+      }
+    });
+  });
+
+  targetEl.querySelectorAll("[data-view-result]").forEach((button) => {
+    button.addEventListener("click", async (clickEvent) => {
+      clickEvent.stopPropagation();
+      const resultEvent = await api(`/api/events/${button.dataset.viewResult}`);
+      const wrap = targetEl.querySelector("#markdownPreviewWrap");
+      const preview = targetEl.querySelector("#markdownPreview");
+      if (!wrap || !preview) return;
+      if (resultEvent.markdownPath) {
+        preview.textContent = await fetch(`/api/markdown/${encodeURIComponent(resultEvent.markdownPath)}`).then((res) => res.text());
+      } else {
+        preview.textContent = resultEvent.rawContent || resultEvent.summary || "（暂无内容）";
+      }
+      wrap.hidden = false;
+      wrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
 
   targetEl.querySelectorAll("[data-command-action]").forEach((button) => {
     button.addEventListener("click", async (clickEvent) => {
@@ -602,6 +698,39 @@ function renderStructuredSummary(event) {
     `;
   }
   return `<p class="detail-summary">${escapeHtml(event.summary)}</p>`;
+}
+
+const ASHARE_ROUNDS = [
+  { key: "第一报", short: "一报" },
+  { key: "第二报", short: "二报" },
+  { key: "第三报", short: "三报" },
+  { key: "全日复盘", short: "复盘" }
+];
+
+function isDailyAshareReport(event) {
+  return event.type === "cn_market_report" && /日报/.test(String(event.vaultPath || ""));
+}
+
+function ashareRoundStatus(event) {
+  const sections = parseMarkdownSections(event.rawContent || "");
+  return ASHARE_ROUNDS.map(({ key, short }) => {
+    const section = sections.find((item) => item.title.includes(key));
+    const body = section ? section.body.join("\n").trim() : "";
+    const present = Boolean(body) && body !== "(未读取)" && body !== "（未读取）";
+    return { key, short, present };
+  });
+}
+
+function renderRoundChips(event, { withBackfill = false } = {}) {
+  if (!isDailyAshareReport(event)) return "";
+  const rounds = ashareRoundStatus(event);
+  const missing = rounds.filter((round) => !round.present);
+  return `
+    <div class="report-rounds">
+      ${rounds.map((round) => badge(round.present ? "completed" : "failed", `${round.short} ${round.present ? "✓" : "缺失"}`)).join("")}
+      ${withBackfill && missing.length ? `<button class="secondary-button row-action-button" data-backfill-report="${escapeHtml(missing.map((round) => round.key).join("、"))}">从 Hermes session 补回</button>` : ""}
+    </div>
+  `;
 }
 
 function renderAshareReport(content) {
@@ -786,16 +915,18 @@ function renderQueueRow(eventId, row, actions = []) {
   const savedState = readCandidateState(eventId, candidate);
   const stateKind = candidateStateKind(savedState);
   const isHandled = Boolean(savedState);
+  const command = commandForCandidate(eventId, candidate);
   return `
     <article class="summary-row ${isHandled ? "has-row-result" : ""} ${stateKind ? `row-state-${stateKind}` : ""}">
       <div class="summary-row-head">
         <strong>${escapeHtml(code || "未命名")}</strong>
         <span>${escapeHtml(market || "")}</span>
         ${priority ? badge(priority === "高" ? "high" : "normal", priority) : ""}
-        ${savedState ? badge("tag", savedState) : (status ? badge("tag", status) : "")}
+        ${command ? badge(commandBadgeClass(command.status), commandStatusLabel(command)) : (savedState ? badge("tag", savedState) : (status ? badge("tag", status) : ""))}
       </div>
       <p>${escapeHtml(note || "")}</p>
       ${date ? `<div class="artifact-path">${escapeHtml(date)}</div>` : ""}
+      ${command?.status === "failed" && command.error ? `<div class="artifact-path">失败原因：${escapeHtml(String(command.error).slice(0, 160))}</div>` : ""}
       <div class="row-actions">
         <span>建议动作</span>
         <div>
@@ -804,11 +935,40 @@ function renderQueueRow(eventId, row, actions = []) {
               ${escapeHtml(actionLabel(action))}
             </button>
           `).join("") || '<span class="muted">暂无建议动作</span>'}
+          ${command?.status === "failed" ? `<button class="secondary-button row-action-button" data-retry-command="${escapeHtml(command.id)}">重试</button>` : ""}
+          ${command?.status === "completed" && command.resultEventId ? `<button class="secondary-button row-action-button" data-view-result="${escapeHtml(command.resultEventId)}">查看研究结果</button>` : ""}
         </div>
       </div>
       <div class="row-result" ${savedState ? "" : "hidden"}>${escapeHtml(savedState || "")}</div>
     </article>
   `;
+}
+
+function commandForCandidate(eventId, candidate) {
+  const matches = state.commands.filter((command) => {
+    if (command.eventId !== eventId) return false;
+    const linked = command.payload?.candidate;
+    if (!linked) return false;
+    return String(linked.code || "") === String(candidate.code || "")
+      && String(linked.name || "") === String(candidate.name || "");
+  });
+  return matches.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0] || null;
+}
+
+function commandStatusLabel(command) {
+  if (command.status === "draft") return "待派发";
+  if (command.status === "dispatched") return command.attempts > 0 ? `排队重试中（第 ${command.attempts + 1} 次）` : "已派发";
+  if (command.status === "running") return "OpenClaw 运行中";
+  if (command.status === "completed") return "已产出";
+  if (command.status === "failed") return `失败（已尝试 ${command.attempts || 1} 次）`;
+  return labels[command.status] || command.status;
+}
+
+function commandBadgeClass(status) {
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  if (status === "running") return "running";
+  return "tag";
 }
 
 function candidateFromRow(row) {
@@ -943,8 +1103,9 @@ function parseMarkdownTableRows(content, options = {}) {
 
 function renderCommands() {
   const queueCommands = openClawQueueCommands(state.commands);
+  const failedCommands = openClawFailedCommands(state.commands);
   const results = openClawResults();
-  commandCountEl.textContent = `${queueCommands.length} 个队列 / ${results.length} 个结果`;
+  commandCountEl.textContent = `${queueCommands.length} 个队列 / ${results.length} 个结果${failedCommands.length ? ` / ${failedCommands.length} 个失败` : ""}`;
   commandListEl.innerHTML = `
     <div class="work-section">
       <h3>待执行队列</h3>
@@ -952,6 +1113,13 @@ function renderCommands() {
         ${queueCommands.map((command) => renderCommandItem(command)).join("") || `<div class="empty-state compact-empty">暂时没有 OpenClaw 队列</div>`}
       </div>
     </div>
+    ${failedCommands.length ? `
+    <div class="work-section">
+      <h3>失败待重试</h3>
+      <div class="command-list compact">
+        ${failedCommands.map((command) => renderCommandItem(command, { showRetry: true })).join("")}
+      </div>
+    </div>` : ""}
     <div class="work-section">
       <h3>已产出文件</h3>
       <div class="artifact-list">
@@ -966,6 +1134,26 @@ function renderCommands() {
       openClawPreview.textContent = content;
     });
   });
+  commandListEl.querySelectorAll("[data-retry-command]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      button.textContent = "重新派发中...";
+      try {
+        await api(`/api/commands/${button.dataset.retryCommand}/dispatch`, { method: "POST" });
+        state.commands = await api("/api/commands?limit=50");
+        renderCommands();
+      } catch {
+        button.textContent = "重派失败";
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+function openClawFailedCommands(commands) {
+  return uniqueCommands(commands.filter((command) => {
+    return command.status === "failed" && command.target === "openclaw" && !isDebugCommand(command);
+  }));
 }
 
 function openClawQueueCommands(commands) {
@@ -1062,13 +1250,15 @@ function renderCommandItem(command, options = {}) {
       <div>
         <div class="event-meta">
           ${badge(command.target, command.target)}
-          ${badge(command.status, labels[command.status] || command.status)}
+          ${badge(commandBadgeClass(command.status), commandStatusLabel(command))}
           ${badge(command.commandType, labels[command.commandType] || command.commandType)}
         </div>
         <strong>${escapeHtml(title)}</strong>
         ${path ? `<div class="artifact-path">${escapeHtml(path)}</div>` : ""}
+        ${command.status === "failed" && command.error ? `<div class="artifact-path">失败原因：${escapeHtml(String(command.error).slice(0, 160))}</div>` : ""}
       </div>
       ${options.showDispatch && command.status === "draft" ? `<button class="secondary-button" data-dispatch-command="${escapeHtml(command.id)}">派发</button>` : ""}
+      ${options.showRetry && command.status === "failed" ? `<button class="secondary-button" data-retry-command="${escapeHtml(command.id)}">重试</button>` : ""}
     </article>
   `;
 }
@@ -1165,15 +1355,14 @@ function isDebugCommand(command) {
 function isDebugText(parts) {
   const haystack = parts.join("\n").toLowerCase();
 
+  // 只过滤明确的冒烟测试/调试内容；真实的执行失败和错误必须留在主视图。
   return (
+    haystack.includes("smoke") ||
+    haystack.includes("smoke-test") ||
     haystack.includes("adapter ok") ||
     haystack.includes("适配器 ok") ||
-    haystack.includes("adapter") ||
-    haystack.includes("command failed") ||
-    haystack.includes("执行失败") ||
-    haystack.includes("session 错误") ||
-    haystack.includes("session error") ||
-    haystack.includes("smoke")
+    haystack.includes("adapter-retry") ||
+    haystack.includes("adapter smoke")
   );
 }
 

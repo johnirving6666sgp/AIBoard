@@ -410,6 +410,32 @@ textarea:focus {
   background: #f2f4f5;
 }
 
+.badge.completed {
+  color: var(--green);
+  border-color: rgba(24, 115, 93, 0.28);
+  background: #f0f8f5;
+}
+
+.badge.running {
+  color: var(--blue);
+  border-color: rgba(35, 94, 168, 0.28);
+  background: #f0f5fb;
+}
+
+.badge.failed {
+  color: var(--red);
+  border-color: rgba(160, 59, 53, 0.34);
+  background: #fbf1f0;
+}
+
+.report-rounds {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 .detail-kicker {
   margin-bottom: 8px;
   color: var(--muted);
