@@ -6,22 +6,24 @@
   <string>com.aiboard.local</string>
 
   <key>WorkingDirectory</key>
-  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk</string>
+  <string>/Users/lobai/Projects/AIBoard</string>
 
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Codex.app/Contents/Resources/node</string>
+    <string>/Users/lobai/.local/share/fnm/node-versions/v22.22.3/installation/bin/node</string>
     <string>apps/server/src/server.js</string>
   </array>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOST</key>
-    <string>0.0.0.0</string>
+    <string>127.0.0.1</string>
     <key>PORT</key>
     <string>4173</string>
     <key>NODE_ENV</key>
     <string>production</string>
+    <key>PATH</key>
+    <string>/Users/lobai/.local/share/fnm/node-versions/v22.22.3/installation/bin:/Users/lobai/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 
   <key>RunAtLoad</key>
@@ -31,9 +33,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboard.out.log</string>
+  <string>/Users/lobai/Projects/AIBoard/logs/aiboard.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboard.err.log</string>
+  <string>/Users/lobai/Projects/AIBoard/logs/aiboard.err.log</string>
 </dict>
 </plist>

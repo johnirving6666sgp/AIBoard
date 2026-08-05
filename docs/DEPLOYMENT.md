@@ -3,11 +3,12 @@
 ## Launch Command
 
 ```bash
-cd /Users/lobai/Documents/Codex/2026-05-20/aiboardinhk
-HOST=0.0.0.0 PORT=4173 npm run start
+cd /Users/lobai/Projects/AIBoard
+HOST=127.0.0.1 PORT=4173 npm run start
 ```
 
-Use `HOST=0.0.0.0` only when the machine is on a trusted network or behind a private tunnel.
+Keep `HOST=127.0.0.1` for local use and Cloudflare Tunnel. Use `HOST=0.0.0.0`
+only when direct LAN access is intentional and the network is trusted.
 
 ## Health Check
 
@@ -65,7 +66,7 @@ tail -f logs/aiboard.err.log
 Current binding:
 
 ```text
-HOST=0.0.0.0
+HOST=127.0.0.1
 PORT=4173
 ```
 
@@ -75,7 +76,8 @@ Local access:
 http://127.0.0.1:4173
 ```
 
-LAN access on the current network:
+Direct LAN access is disabled by default. To enable it intentionally, change
+the LaunchAgent binding to `HOST=0.0.0.0` and then use:
 
 ```text
 http://192.168.1.90:4173

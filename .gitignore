@@ -5,6 +5,7 @@ dist/
 .env.*
 config/aiboard.config.local.json
 *.log
+logs/
 *.sqlite
 *.sqlite3
 data/*

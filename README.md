@@ -205,8 +205,13 @@ This Workers configuration currently deploys the static AIBoard shell from `apps
 For a local always-on service:
 
 ```bash
-HOST=0.0.0.0 PORT=4173 npm run start
+HOST=127.0.0.1 PORT=4173 npm run start
 ```
+
+The production LaunchAgent expects the repository at `/Users/lobai/Projects/AIBoard`
+and uses the pinned Node 22.22.3 runtime declared in `deploy/com.aiboard.local.plist`.
+Keeping the service outside `Documents` avoids macOS privacy restrictions on
+background processes.
 
 The homepage now starts with a compact daily cockpit:
 

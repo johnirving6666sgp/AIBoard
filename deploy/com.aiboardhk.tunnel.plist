@@ -21,9 +21,9 @@
   <true/>
 
   <key>StandardOutPath</key>
-  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboardhk-tunnel.out.log</string>
+  <string>/Users/lobai/Projects/AIBoard/logs/aiboardhk-tunnel.out.log</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/lobai/Documents/Codex/2026-05-20/aiboardinhk/logs/aiboardhk-tunnel.err.log</string>
+  <string>/Users/lobai/Projects/AIBoard/logs/aiboardhk-tunnel.err.log</string>
 </dict>
 </plist>
