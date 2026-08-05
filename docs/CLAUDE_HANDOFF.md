@@ -6,6 +6,59 @@
 > 迁移到 `~/Projects/AIBoard`（避开 macOS 对 `Documents` 下后台进程的隐私限制），
 > 旧目录只剩这份文档的副本，不要再往那里写代码。
 
+## 交接快照（2026-08-06）
+
+接手的人先看这一节，再看下面的长期说明。
+
+### 运行状态：正常
+
+- `com.aiboard.local`（pid 35853）自 2026-08-02 21:09 连续运行，Node v22.22.3
+- Vault watcher 每 15 秒一轮，最近一轮 scanned 537 / imported 0 / failed 0，无连续失败
+- `com.aiboardhk.tunnel` 在跑，公网域名挂在 Cloudflare Access 后面
+
+### git：8/2 以来的改动已入库，但未 push
+
+8/2 迁移后写的一批代码（+614/-65，16 个文件）直到 8/6 才提交，拆成 4 个 commit：
+
+```text
+06806ae  Vault 事件去重 + session 导入降噪 + 索引
+d3c87ae  命令状态机 + 后台 worker
+2141842  A股四段完整性 / 重新读取 Vault / 失败重试（前端）
+6bcaf29  部署路径迁移 + 文档
+```
+
+**这些提交还没 push 到 origin。** 另外旧目录 `~/Documents/Codex/2026-05-20/aiboardinhk/docs/`
+里的跳转说明落在 `~/.git`（remote `dashboard4ai`）那个 home 级仓库中，同样未提交。
+
+### 数据现状：板子处于低活状态
+
+| 来源 | 事件数 | 最后一条 |
+| --- | --- | --- |
+| vault | 529 | 2026-08-05 |
+| openclaw | 167 | 2026-08-02 |
+| hermes | 5 | **2026-05-21** |
+
+- events 共 701 条：archived 511 / new 189 / in_progress 1
+- 日新增极低：8/3 两条、8/4 六条、8/5 两条（5/30 曾单日 116 条）
+- hermes adapter 事实上从 5 月起没再直接写过事件，全靠 Vault 文件同步兜着，
+  值得查一下这条直连通道是不是已经废弃
+- commands 里有 11 条停在 2026-05-26 的 draft，worker 只自动派发 24 小时内的草稿，
+  这批会永远躺着，需要人工决定重新派发还是取消
+
+### 覆盖面：只监听了 Vault 的 12%
+
+Vault 共 4543 个 md，`watchFolders` 覆盖 537 个。大头 `skills/`（3722）确实不该收，
+但 `reports/`、`weekly/`、`决策日志/`、`investing/`、`notes/`、`telegram_reports/`
+目前都在监听范围外，按日常用法 `决策日志/` 和 `weekly/` 大概率该纳入。
+
+### 下一步（按优先级）
+
+1. `scripts/healthcheck.mjs` 对 Cloudflare Access 302 的误判 —— 公网探活拿到 302
+   是登录跳转而非故障，按 200 判活会误报
+2. `watchFolders` 扩容（至少 `决策日志/`、`weekly/`），扩容前先跑一次全量 import 观察噪音
+3. 清理 11 条僵尸 draft 命令
+4. 查明 hermes 直连通道为何自 5/21 起无事件
+
 ## 一句话定位
 
 AIBoard 是一个本地优先的 Agent 输出驾驶舱。
@@ -463,3 +516,9 @@ Vault 里的 Markdown 是最终可读资产，AIBoard 只是把它变成更好�
 ## 当前给 Claude 的一句话任务
 
 请优化 AIBoard 的数据一致性和每日研究驾驶舱体验，重点解决 Vault 同路径重复事件、A股日报多轮完整性检测、OpenClaw 输出回流状态、首页信息架构收敛，并保持当前“不接 Telegram、以 Vault Markdown 为共享状态层”的方向不变。
+
+**2026-08-06 更新**：上面四项里，前三项已完成（见「交接快照」），首页收敛做了一半。
+现在真正的瓶颈不是功能缺失，而是**进来的东西太少**——日新增只有个位数事件，
+hermes 直连通道静默，Vault 只监听了 12%。下一轮请把重点放在
+「让该进来的内容进得来」（watchFolders 覆盖、hermes 通道排查），
+而不是继续加 UI 功能。
