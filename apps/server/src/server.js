@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
-import { runCommandById, runDispatchedCommands } from "./agent-adapters.js";
+import { runCommandById } from "./agent-adapters.js";
+import { runWorkerOnce, startCommandWorker } from "./command-worker.js";
 import { importAgentOutputs, startAgentOutputWatcher } from "./agent-output-importer.js";
 import { createCommandDraft, dispatchCommand, queryCommands, updateCommandStatus } from "./command-service.js";
 import { loadConfig } from "./config.js";
@@ -10,7 +11,7 @@ import { createEvent, getEventWithActions, queryEvents, setEventStatus } from ".
 import { importInbox, startInboxWatcher } from "./inbox-importer.js";
 import { rootDir, webDir } from "./paths.js";
 import { seedIfEmpty } from "./seed.js";
-import { getVaultImportStatus, getVaultSyncState, importVault, startVaultWatcher } from "./vault-importer.js";
+import { getVaultImportStatus, getVaultSyncState, importVault, reimportVaultFile, startVaultWatcher } from "./vault-importer.js";
 
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "127.0.0.1";
@@ -24,6 +25,7 @@ await importVault(await loadConfig()).catch((error) => {
 startInboxWatcher({ intervalMs: Number(process.env.INBOX_POLL_MS || 5000) });
 startVaultWatcher(loadConfig);
 startAgentOutputWatcher({ intervalMs: Number(process.env.AGENT_OUTPUT_POLL_MS || 15000) });
+startCommandWorker({ intervalMs: Number(process.env.AIBOARD_WORKER_MS || 15000) });
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -108,6 +110,13 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/vault/reimport") {
+    const body = await readJson(req);
+    const result = await reimportVaultFile(await loadConfig(), body.vaultPath);
+    sendJson(res, result.ok ? 200 : 400, result);
+    return;
+  }
+
   if (req.method === "GET" && url.pathname === "/api/events") {
     sendJson(res, 200, queryEvents(Object.fromEntries(url.searchParams)));
     return;
@@ -138,7 +147,12 @@ async function handleApi(req, res, url) {
   const commandStatusMatch = url.pathname.match(/^\/api\/commands\/([^/]+)\/status$/);
   if (commandStatusMatch && req.method === "PATCH") {
     const body = await readJson(req);
-    sendJson(res, 200, await updateCommandStatus(commandStatusMatch[1], body.status));
+    const result = await updateCommandStatus(commandStatusMatch[1], body.status);
+    if (!result) {
+      sendJson(res, 404, { error: "Command not found" });
+      return;
+    }
+    sendJson(res, result.ok === false ? 409 : 200, result);
     return;
   }
 
@@ -165,15 +179,8 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && url.pathname === "/api/adapters/run") {
-    const openClawDrafts = queryCommands({ status: "draft", limit: 50 }).filter((command) => {
-      return command.target === "openclaw" && command.payload?.status !== "done";
-    });
-    const dispatched = [];
-    for (const command of openClawDrafts) {
-      dispatched.push(await dispatchCommand(command.id));
-    }
-    const runResult = await runDispatchedCommands({ limit: 5, target: "openclaw" });
-    sendJson(res, 200, { dispatched: dispatched.length, ...runResult });
+    // 手动触发一轮 worker：自动派发新草稿 + 立即执行排队中的命令。
+    sendJson(res, 200, await runWorkerOnce({ autoDispatch: true, limit: 5 }));
     return;
   }
 

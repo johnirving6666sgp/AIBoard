@@ -1,7 +1,17 @@
 import { createId } from "./ids.js";
-import { getCommand, getEvent, insertCommand, listCommands, listEventCommands, setCommandStatus, updateEventStatus } from "./db.js";
+import { getCommand, getEvent, insertCommand, listCommands, listEventCommands, markCommandDispatched, setCommandStatus, updateEventStatus } from "./db.js";
 import { appendAuditNote } from "./markdown.js";
 import { writeCommandOutbox } from "./outbox.js";
+
+// 命令状态机：只允许这些转移，避免状态被随意改乱。
+const ALLOWED_TRANSITIONS = {
+  draft: ["dispatched", "cancelled"],
+  dispatched: ["running", "cancelled", "draft"],
+  running: ["completed", "failed"],
+  failed: ["dispatched", "cancelled"],
+  completed: [],
+  cancelled: ["draft"]
+};
 
 export function queryCommands(filters) {
   return listCommands(filters);
@@ -25,19 +35,30 @@ export async function createCommandDraft(input) {
 }
 
 export async function updateCommandStatus(id, status) {
-  setCommandStatus(id, status);
-  return { id, status };
+  const command = getCommand(id);
+  if (!command) return null;
+  const allowed = ALLOWED_TRANSITIONS[command.status] || [];
+  if (!allowed.includes(status)) {
+    return { id, status: command.status, ok: false, error: `不允许从 ${command.status} 变更为 ${status}` };
+  }
+  if (status === "dispatched") {
+    markCommandDispatched(id);
+  } else {
+    setCommandStatus(id, status);
+  }
+  return { id, status, ok: true };
 }
 
+// draft 首次派发；failed 允许重新派发（重试）。
 export async function dispatchCommand(id) {
   const command = getCommand(id);
   if (!command) return null;
-  if (command.status !== "draft") {
+  if (!["draft", "failed"].includes(command.status)) {
     return { ...command, dispatched: false, reason: `命令当前状态为 ${command.status}。` };
   }
 
   const outbox = await writeCommandOutbox({ ...command, status: "dispatched" });
-  setCommandStatus(id, "dispatched");
+  markCommandDispatched(id);
 
   if (command.eventId) {
     const event = getEvent(command.eventId);
