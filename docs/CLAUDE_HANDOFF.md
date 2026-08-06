@@ -15,20 +15,29 @@
 - `com.aiboard.local`（pid 35853）自 2026-08-02 21:09 连续运行，Node v22.22.3
 - Vault watcher 每 15 秒一轮，最近一轮 scanned 537 / imported 0 / failed 0，无连续失败
 - `com.aiboardhk.tunnel` 在跑，公网域名挂在 Cloudflare Access 后面
+- 已核对 `~/.hermes`、`~/Library/LaunchAgents`、`~/.cloudflared`、`~/JohnAI`：
+  没有任何运行时配置还引用迁移前的旧路径
 
-### git：8/2 以来的改动已入库，但未 push
+### git：已全部入库并推送，本地与 origin 同步
 
-8/2 迁移后写的一批代码（+614/-65，16 个文件）直到 8/6 才提交，拆成 4 个 commit：
+8/2 迁移后写的一批代码（+614/-65，16 个文件）在工作区躺了 4 天，8/6 才提交，拆成 5 个 commit：
 
 ```text
 06806ae  Vault 事件去重 + session 导入降噪 + 索引
 d3c87ae  命令状态机 + 后台 worker
 2141842  A股四段完整性 / 重新读取 Vault / 失败重试（前端）
 6bcaf29  部署路径迁移 + 文档
+bd8f088  交接快照
 ```
 
-**这些提交还没 push 到 origin。** 另外旧目录 `~/Documents/Codex/2026-05-20/aiboardinhk/docs/`
-里的跳转说明落在 `~/.git`（remote `dashboard4ai`）那个 home 级仓库中，同样未提交。
+已 push（`f0c50c8..bd8f088`，干净快进），工作区干净。
+
+教训：这个项目容易「改完直接跑起来、忘了入 git」——服务读的是磁盘上的文件，
+不提交也照常工作，所以没有任何反馈提醒你。动完代码当天提交。
+
+旧目录 `~/Documents/Codex/2026-05-20/aiboardinhk/` 只剩一份跳转说明，
+它落在 `~/.git`（remote `dashboard4ai`）范围内但被该仓库的白名单式 `.gitignore`
+忽略，**没有待提交内容**，不用管。
 
 ### 数据现状：板子处于低活状态
 
